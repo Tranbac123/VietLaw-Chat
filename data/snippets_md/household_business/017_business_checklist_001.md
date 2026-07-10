@@ -1,7 +1,7 @@
 ---
 id: business_checklist_001
 domain: household_business
-source_name: "VietLaw Guide Curated Note"
+source_name: "VietLaw-Chat Curated Note"
 source_url: ""
 source_type: curated_note
 status: active

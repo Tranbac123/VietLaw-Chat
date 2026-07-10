@@ -77,7 +77,7 @@
     "id": "civil_rental_001",
     "domain": "civil_dispute",
     "title": "Checklist khi tranh chấp thuê nhà hoặc tiền cọc",
-    "source_name": "VietLaw Guide Curated Note",
+    "source_name": "VietLaw-Chat Curated Note",
     "source_url": "",
     "source_type": "curated_note",
     "status": "active",
@@ -103,7 +103,7 @@
     "id": "civil_loan_001",
     "domain": "civil_dispute",
     "title": "Checklist khi vay mượn tiền không trả",
-    "source_name": "VietLaw Guide Curated Note",
+    "source_name": "VietLaw-Chat Curated Note",
     "source_url": "",
     "source_type": "curated_note",
     "status": "active",
@@ -129,7 +129,7 @@
     "id": "civil_consumer_001",
     "domain": "civil_dispute",
     "title": "Checklist khi mua hàng online nhưng không nhận được hàng",
-    "source_name": "VietLaw Guide Curated Note",
+    "source_name": "VietLaw-Chat Curated Note",
     "source_url": "",
     "source_type": "curated_note",
     "status": "active",
@@ -150,124 +150,199 @@
     "last_checked": "2026-07-10"
   },
   {
-    "id": "traffic_law_001",
-    "domain": "traffic",
-    "title": "Luật Trật tự, an toàn giao thông đường bộ",
-    "source_name": "Cổng thông tin điện tử Chính phủ - Luật số 36/2024/QH15",
-    "source_url": "https://chinhphu.vn/?classid=1&docid=211194&orggroupid=1&pageid=27160",
-    "source_type": "official_source",
+    "id": "general_no_source_001",
+    "domain": "unknown",
+    "title": "Không có nguồn phù hợp thì phải trả lời thận trọng",
+    "source_name": "VietLaw-Chat Safety Policy",
+    "source_url": "",
+    "source_type": "safety_policy",
     "status": "active",
-    "text": "Luật Trật tự, an toàn giao thông đường bộ quy định về quy tắc, phương tiện, người tham gia giao thông đường bộ, tuần tra, kiểm soát và giải quyết tai nạn giao thông đường bộ.",
-    "plain_language_summary": "Với câu hỏi về biên bản, giấy phạt hoặc vi phạm giao thông, cần xem thông tin cụ thể trên giấy tờ và các quy định liên quan.",
+    "text": "Khi VietLaw-Chat chưa có nguồn phù hợp cho câu hỏi, câu trả lời chỉ nên dừng ở mức thận trọng. Người dùng nên cung cấp thêm thông tin, hiểu giới hạn của bản demo và kiểm tra với luật sư hoặc cơ quan chức năng nếu vụ việc quan trọng.",
+    "plain_language_summary": "Lưu ý thận trọng khi bản demo chưa có nguồn phù hợp.",
     "tags": [
-      "giao_thong",
-      "luat_giao_thong",
-      "bien_ban",
-      "giay_phat",
-      "vi_pham_giao_thong",
-      "canh_sat_giao_thong"
+      "no_source",
+      "khong_co_nguon",
+      "hoi_them",
+      "can_trong",
+      "citation_guard",
+      "unknown"
     ],
     "risk_notes": [
-      "medium_risk",
-      "ask_for_violation_record"
+      "avoid_overclaim",
+      "ask_clarifying_questions"
     ],
     "last_checked": "2026-07-10"
   },
   {
-    "id": "traffic_fine_001",
-    "domain": "traffic",
-    "title": "Checklist khi không hiểu lỗi trong biên bản giao thông",
-    "source_name": "VietLaw Guide Curated Note",
+    "id": "general_privacy_001",
+    "domain": "unknown",
+    "title": "Không yêu cầu thông tin cá nhân nhạy cảm trong bản demo",
+    "source_name": "VietLaw-Chat Safety Policy",
+    "source_url": "",
+    "source_type": "safety_policy",
+    "status": "active",
+    "text": "Trong bản demo, người dùng không nên nhập số CCCD, tài khoản ngân hàng, địa chỉ cụ thể, số điện thoại hoặc thông tin cá nhân nhạy cảm nếu không thật sự cần thiết cho việc định hướng ban đầu.",
+    "plain_language_summary": "Lưu ý quyền riêng tư cho UI và chatbot.",
+    "tags": [
+      "privacy",
+      "du_lieu_ca_nhan",
+      "cccd",
+      "tai_khoan_ngan_hang",
+      "dia_chi",
+      "ban_demo"
+    ],
+    "risk_notes": [
+      "privacy",
+      "demo_safety"
+    ],
+    "last_checked": "2026-07-10"
+  },
+  {
+    "id": "general_unsupported_001",
+    "domain": "unknown",
+    "title": "Câu hỏi ngoài phạm vi bản demo",
+    "source_name": "VietLaw-Chat Curated Note",
     "source_url": "",
     "source_type": "curated_note",
     "status": "active",
-    "text": "Khi người dùng không hiểu lỗi ghi trong biên bản giao thông, cần yêu cầu họ cung cấp nội dung lỗi, thời gian, địa điểm, hành vi bị ghi nhận, giấy tờ liên quan và mong muốn của họ là hiểu lỗi, chuẩn bị giấy tờ hay xác minh/khiếu nại.",
-    "plain_language_summary": "Không nên kết luận giấy phạt đúng hay sai nếu chưa có nội dung biên bản.",
+    "text": "Nếu câu hỏi không liên quan pháp lý hoặc nằm ngoài phạm vi MVP, hệ thống nên trả lời rằng bản demo hiện tập trung vào định hướng pháp lý ban đầu cho tranh chấp dân sự đời thường, giao thông và hộ kinh doanh nhỏ.",
+    "plain_language_summary": "Unsupported behavior cho câu hỏi không liên quan.",
     "tags": [
-      "phat_giao_thong",
-      "bien_ban_giao_thong",
-      "khong_hieu_loi",
-      "giay_phat",
-      "khieu_nai",
-      "xac_minh"
+      "unsupported",
+      "ngoai_pham_vi",
+      "khong_phap_ly",
+      "unknown",
+      "ban_demo"
     ],
     "risk_notes": [
-      "medium_risk",
-      "missing_document_content"
+      "low_risk",
+      "unsupported"
     ],
     "last_checked": "2026-07-10"
   },
   {
-    "id": "traffic_documents_001",
-    "domain": "traffic",
-    "title": "Giấy tờ nên chuẩn bị khi làm việc về vi phạm giao thông",
-    "source_name": "VietLaw Guide Curated Note",
-    "source_url": "",
-    "source_type": "curated_note",
-    "status": "active",
-    "text": "Người dùng nên chuẩn bị biên bản hoặc giấy phạt, giấy phép lái xe, giấy đăng ký xe, giấy tờ cá nhân, bảo hiểm trách nhiệm dân sự nếu có liên quan và ảnh/video hoặc thông tin sự việc nếu có.",
-    "plain_language_summary": "Checklist giấy tờ giúp người dùng hỏi lại hoặc làm việc với cơ quan chức năng theo hướng hợp pháp.",
-    "tags": [
-      "giay_phep_lai_xe",
-      "dang_ky_xe",
-      "bao_hiem",
-      "bien_ban",
-      "giay_phat",
-      "giay_to_xe"
-    ],
-    "risk_notes": [
-      "medium_risk",
-      "document_checklist"
-    ],
-    "last_checked": "2026-07-10"
-  },
-  {
-    "id": "traffic_accident_001",
+    "id": "high_risk_police_001",
     "domain": "high_risk",
-    "title": "Tai nạn giao thông có người bị thương hoặc dấu hiệu nghiêm trọng",
-    "source_name": "Cổng thông tin điện tử Chính phủ - Luật số 36/2024/QH15",
-    "source_url": "https://chinhphu.vn/?classid=1&docid=211194&orggroupid=1&pageid=27160",
-    "source_type": "official_source",
+    "title": "Bị công an mời làm việc là tình huống rủi ro cao",
+    "source_name": "VietLaw-Chat Safety Policy",
+    "source_url": "",
+    "source_type": "safety_policy",
     "status": "active",
-    "text": "Với tai nạn giao thông có hậu quả về người, tài sản hoặc có dấu hiệu tội phạm, việc xử lý có thể liên quan đến cơ quan chức năng và quy trình điều tra, xác minh. Hệ thống không nên hướng dẫn trốn tránh trách nhiệm hoặc rời khỏi hiện trường.",
-    "plain_language_summary": "Nếu tai nạn có người bị thương, tử vong hoặc thiệt hại nghiêm trọng, cần đánh dấu rủi ro cao và khuyến nghị liên hệ luật sư/cơ quan chức năng.",
+    "text": "Khi bạn bị công an mời làm việc, bị điều tra, bị tố cáo hình sự hoặc lo ngại trách nhiệm hình sự, đây là tình huống rủi ro cao. VietLaw-Chat không hướng dẫn chiến thuật khai báo để né trách nhiệm; hướng an toàn là chuẩn bị giấy tờ, timeline sự việc và liên hệ luật sư hoặc người có chuyên môn.",
+    "plain_language_summary": "VietLaw-Chat chỉ hỗ trợ checklist giấy tờ, timeline sự việc và câu hỏi cần hỏi luật sư trong tình huống rủi ro cao.",
     "tags": [
-      "tai_nan_giao_thong",
-      "nguoi_bi_thuong",
-      "tai_nan_nghiem_trong",
-      "co_quan_chuc_nang",
-      "high_risk",
-      "luat_su"
+      "cong_an",
+      "bi_moi_lam_viec",
+      "khai_gi_de_khong_bi_toi",
+      "hinh_su",
+      "luat_su",
+      "high_risk"
     ],
     "risk_notes": [
       "high_risk",
       "requires_escalation",
-      "do_not_evade"
+      "no_tactical_legal_advice"
     ],
     "last_checked": "2026-07-10"
   },
   {
-    "id": "traffic_safety_001",
+    "id": "high_risk_evidence_001",
     "domain": "high_risk",
-    "title": "Không hỗ trợ né phạt hoặc khai gian trong vi phạm giao thông",
-    "source_name": "VietLaw Guide Safety Note",
+    "title": "Không hỗ trợ giấu hoặc xóa chứng cứ",
+    "source_name": "VietLaw-Chat Safety Policy",
     "source_url": "",
-    "source_type": "curated_note",
+    "source_type": "safety_policy",
     "status": "active",
-    "text": "Nếu người dùng hỏi cách né phạt, khai gian, xóa bằng chứng hoặc đối phó sai trái với cơ quan chức năng, hệ thống phải từ chối và chuyển sang hướng hợp pháp như kiểm tra nội dung biên bản, chuẩn bị giấy tờ và hỏi lại cơ quan có thẩm quyền.",
-    "plain_language_summary": "Safety note cho các yêu cầu né phạt giao thông.",
+    "text": "VietLaw-Chat không hỗ trợ giấu chứng cứ, xóa tin nhắn, tiêu hủy tài liệu hoặc làm sai lệch thông tin. Hướng an toàn là giữ nguyên tài liệu hợp pháp, chuẩn bị timeline sự việc và hỏi luật sư hoặc cơ quan chức năng.",
+    "plain_language_summary": "Yêu cầu giấu, xóa hoặc tiêu hủy chứng cứ không được hỗ trợ; người dùng nên giữ tài liệu hợp pháp và hỏi người có chuyên môn.",
     "tags": [
-      "ne_phat",
-      "khai_gian",
-      "doi_pho",
-      "giao_thong",
+      "giau_chung_cu",
+      "xoa_chung_cu",
+      "xoa_tin_nhan",
+      "tieu_huy_chung_cu",
       "refuse_unsafe_request",
       "high_risk"
     ],
     "risk_notes": [
       "high_risk",
-      "unsafe_request",
-      "must_refuse"
+      "must_refuse",
+      "evidence_hiding"
+    ],
+    "last_checked": "2026-07-10"
+  },
+  {
+    "id": "high_risk_fake_docs_001",
+    "domain": "high_risk",
+    "title": "Không hỗ trợ làm giả giấy tờ",
+    "source_name": "VietLaw-Chat Safety Policy",
+    "source_url": "",
+    "source_type": "safety_policy",
+    "status": "active",
+    "text": "VietLaw-Chat không hỗ trợ làm giả giấy tờ, giả chữ ký, sửa giấy tờ hoặc khai gian hồ sơ. Hướng an toàn là chuẩn bị hồ sơ hợp pháp, kiểm tra giấy tờ còn thiếu và hỏi cơ quan có thẩm quyền hoặc luật sư khi cần.",
+    "plain_language_summary": "Yêu cầu làm giả hoặc sửa sai lệch giấy tờ không được hỗ trợ; nên chuyển sang chuẩn bị hồ sơ hợp pháp.",
+    "tags": [
+      "lam_gia_giay_to",
+      "gia_chu_ky",
+      "khai_gian",
+      "sua_giay_to",
+      "refuse_unsafe_request",
+      "high_risk"
+    ],
+    "risk_notes": [
+      "high_risk",
+      "must_refuse",
+      "fake_documents"
+    ],
+    "last_checked": "2026-07-10"
+  },
+  {
+    "id": "high_risk_threat_001",
+    "domain": "high_risk",
+    "title": "Bị đe dọa hoặc có nguy cơ bạo lực",
+    "source_name": "VietLaw-Chat Safety Policy",
+    "source_url": "",
+    "source_type": "safety_policy",
+    "status": "active",
+    "text": "Nếu bạn bị đe dọa, uy hiếp, cưỡng ép, bị dọa đánh hoặc có nguy cơ bạo lực, hãy ưu tiên an toàn cá nhân. VietLaw-Chat không khuyến khích tự xử; hướng an toàn là liên hệ cơ quan chức năng, người thân đáng tin cậy hoặc luật sư khi cần.",
+    "plain_language_summary": "Các tình huống có đe dọa hoặc bạo lực cần ưu tiên an toàn và khuyến nghị liên hệ cơ quan chức năng hoặc luật sư.",
+    "tags": [
+      "bi_de_doa",
+      "de_doa_danh",
+      "bao_luc",
+      "uy_hiep",
+      "cuong_ep",
+      "co_quan_chuc_nang",
+      "high_risk"
+    ],
+    "risk_notes": [
+      "high_risk",
+      "requires_escalation",
+      "personal_safety"
+    ],
+    "last_checked": "2026-07-10"
+  },
+  {
+    "id": "high_risk_debt_001",
+    "domain": "high_risk",
+    "title": "Không hỗ trợ đòi nợ bằng đe dọa hoặc cưỡng ép",
+    "source_name": "VietLaw-Chat Safety Policy",
+    "source_url": "",
+    "source_type": "safety_policy",
+    "status": "active",
+    "text": "VietLaw-Chat không hỗ trợ đe dọa, cưỡng ép, giữ tài sản, thuê người đòi nợ hoặc bêu xấu người khác để đòi tiền. Hướng an toàn là chuẩn bị chứng cứ, thương lượng hợp pháp và hỏi luật sư hoặc cơ quan chức năng khi vụ việc nghiêm trọng.",
+    "plain_language_summary": "Không hỗ trợ tự xử hoặc đe dọa trong tranh chấp nợ.",
+    "tags": [
+      "doi_no",
+      "de_doa_doi_no",
+      "giu_tai_san",
+      "thue_nguoi_doi_no",
+      "boi_nho",
+      "refuse_unsafe_request"
+    ],
+    "risk_notes": [
+      "high_risk",
+      "must_refuse",
+      "coercion"
     ],
     "last_checked": "2026-07-10"
   },
@@ -392,7 +467,7 @@
     "id": "business_checklist_001",
     "domain": "household_business",
     "title": "Checklist ban đầu khi mở hộ kinh doanh nhỏ",
-    "source_name": "VietLaw Guide Curated Note",
+    "source_name": "VietLaw-Chat Curated Note",
     "source_url": "",
     "source_type": "curated_note",
     "status": "active",
@@ -415,12 +490,12 @@
     "id": "business_safety_001",
     "domain": "high_risk",
     "title": "Không hỗ trợ lách giấy phép hoặc khai sai khi kinh doanh",
-    "source_name": "VietLaw Guide Safety Note",
+    "source_name": "VietLaw-Chat Safety Policy",
     "source_url": "",
-    "source_type": "curated_note",
+    "source_type": "safety_policy",
     "status": "active",
-    "text": "Nếu người dùng hỏi cách lách giấy phép, khai sai, trốn thuế, né kiểm tra hoặc bán trước đăng ký sau theo hướng vi phạm, hệ thống phải từ chối và chuyển sang checklist đăng ký hợp pháp.",
-    "plain_language_summary": "Safety note cho yêu cầu lách luật trong kinh doanh nhỏ.",
+    "text": "VietLaw-Chat không hỗ trợ lách giấy phép, khai sai, trốn thuế, né kiểm tra hoặc bán trước đăng ký sau theo hướng vi phạm. Hướng an toàn là kiểm tra điều kiện kinh doanh, chuẩn bị hồ sơ đăng ký hợp pháp và hỏi cơ quan địa phương khi chưa rõ.",
+    "plain_language_summary": "Lưu ý an toàn cho yêu cầu lách luật trong kinh doanh nhỏ.",
     "tags": [
       "lach_giay_phep",
       "khai_sai",
@@ -437,199 +512,124 @@
     "last_checked": "2026-07-10"
   },
   {
-    "id": "high_risk_police_001",
-    "domain": "high_risk",
-    "title": "Bị công an mời làm việc là tình huống rủi ro cao",
-    "source_name": "VietLaw Guide Safety Note",
-    "source_url": "",
-    "source_type": "curated_note",
+    "id": "traffic_law_001",
+    "domain": "traffic",
+    "title": "Luật Trật tự, an toàn giao thông đường bộ",
+    "source_name": "Cổng thông tin điện tử Chính phủ - Luật số 36/2024/QH15",
+    "source_url": "https://chinhphu.vn/?classid=1&docid=211194&orggroupid=1&pageid=27160",
+    "source_type": "official_source",
     "status": "active",
-    "text": "Khi người dùng nói bị công an mời làm việc, bị điều tra, bị tố cáo hình sự hoặc hỏi cách khai để không bị tội, hệ thống phải đánh dấu rủi ro cao, không hướng dẫn chiến thuật khai báo và khuyến nghị liên hệ luật sư hoặc người có chuyên môn.",
-    "plain_language_summary": "Hệ thống chỉ nên hỗ trợ checklist giấy tờ, timeline sự việc và câu hỏi cần hỏi luật sư.",
+    "text": "Luật Trật tự, an toàn giao thông đường bộ quy định về quy tắc, phương tiện, người tham gia giao thông đường bộ, tuần tra, kiểm soát và giải quyết tai nạn giao thông đường bộ.",
+    "plain_language_summary": "Với câu hỏi về biên bản, giấy phạt hoặc vi phạm giao thông, cần xem thông tin cụ thể trên giấy tờ và các quy định liên quan.",
     "tags": [
-      "cong_an",
-      "bi_moi_lam_viec",
-      "khai_gi_de_khong_bi_toi",
-      "hinh_su",
-      "luat_su",
-      "high_risk"
+      "giao_thong",
+      "luat_giao_thong",
+      "bien_ban",
+      "giay_phat",
+      "vi_pham_giao_thong",
+      "canh_sat_giao_thong"
     ],
     "risk_notes": [
-      "high_risk",
-      "requires_escalation",
-      "no_tactical_legal_advice"
+      "medium_risk",
+      "ask_for_violation_record"
     ],
     "last_checked": "2026-07-10"
   },
   {
-    "id": "high_risk_evidence_001",
-    "domain": "high_risk",
-    "title": "Không hỗ trợ giấu hoặc xóa chứng cứ",
-    "source_name": "VietLaw Guide Safety Note",
+    "id": "traffic_fine_001",
+    "domain": "traffic",
+    "title": "Checklist khi không hiểu lỗi trong biên bản giao thông",
+    "source_name": "VietLaw-Chat Curated Note",
     "source_url": "",
     "source_type": "curated_note",
     "status": "active",
-    "text": "Nếu người dùng hỏi cách giấu chứng cứ, xóa tin nhắn, tiêu hủy tài liệu hoặc làm sai lệch thông tin, hệ thống phải từ chối và khuyến nghị giữ nguyên tài liệu hợp pháp, chuẩn bị timeline và hỏi luật sư/cơ quan chức năng.",
-    "plain_language_summary": "Yêu cầu giấu, xóa hoặc tiêu hủy chứng cứ phải bị từ chối.",
+    "text": "Khi người dùng không hiểu lỗi ghi trong biên bản giao thông, cần yêu cầu họ cung cấp nội dung lỗi, thời gian, địa điểm, hành vi bị ghi nhận, giấy tờ liên quan và mong muốn của họ là hiểu lỗi, chuẩn bị giấy tờ hay xác minh/khiếu nại.",
+    "plain_language_summary": "Không nên kết luận giấy phạt đúng hay sai nếu chưa có nội dung biên bản.",
     "tags": [
-      "giau_chung_cu",
-      "xoa_chung_cu",
-      "xoa_tin_nhan",
-      "tieu_huy_chung_cu",
-      "refuse_unsafe_request",
-      "high_risk"
+      "phat_giao_thong",
+      "bien_ban_giao_thong",
+      "khong_hieu_loi",
+      "giay_phat",
+      "khieu_nai",
+      "xac_minh"
     ],
     "risk_notes": [
-      "high_risk",
-      "must_refuse",
-      "evidence_hiding"
+      "medium_risk",
+      "missing_document_content"
     ],
     "last_checked": "2026-07-10"
   },
   {
-    "id": "high_risk_fake_docs_001",
-    "domain": "high_risk",
-    "title": "Không hỗ trợ làm giả giấy tờ",
-    "source_name": "VietLaw Guide Safety Note",
+    "id": "traffic_documents_001",
+    "domain": "traffic",
+    "title": "Giấy tờ nên chuẩn bị khi làm việc về vi phạm giao thông",
+    "source_name": "VietLaw-Chat Curated Note",
     "source_url": "",
     "source_type": "curated_note",
     "status": "active",
-    "text": "Nếu người dùng hỏi cách làm giả giấy tờ, giả chữ ký, sửa giấy tờ hoặc khai gian hồ sơ, hệ thống phải từ chối và chuyển sang hướng chuẩn bị hồ sơ hợp pháp.",
-    "plain_language_summary": "Yêu cầu làm giả giấy tờ phải bị từ chối.",
+    "text": "Người dùng nên chuẩn bị biên bản hoặc giấy phạt, giấy phép lái xe, giấy đăng ký xe, giấy tờ cá nhân, bảo hiểm trách nhiệm dân sự nếu có liên quan và ảnh/video hoặc thông tin sự việc nếu có.",
+    "plain_language_summary": "Checklist giấy tờ giúp người dùng hỏi lại hoặc làm việc với cơ quan chức năng theo hướng hợp pháp.",
     "tags": [
-      "lam_gia_giay_to",
-      "gia_chu_ky",
-      "khai_gian",
-      "sua_giay_to",
-      "refuse_unsafe_request",
-      "high_risk"
+      "giay_phep_lai_xe",
+      "dang_ky_xe",
+      "bao_hiem",
+      "bien_ban",
+      "giay_phat",
+      "giay_to_xe"
     ],
     "risk_notes": [
-      "high_risk",
-      "must_refuse",
-      "fake_documents"
+      "medium_risk",
+      "document_checklist"
     ],
     "last_checked": "2026-07-10"
   },
   {
-    "id": "high_risk_threat_001",
+    "id": "traffic_accident_001",
     "domain": "high_risk",
-    "title": "Bị đe dọa hoặc có nguy cơ bạo lực",
-    "source_name": "VietLaw Guide Safety Note",
-    "source_url": "",
-    "source_type": "curated_note",
+    "title": "Tai nạn giao thông có người bị thương hoặc dấu hiệu nghiêm trọng",
+    "source_name": "Cổng thông tin điện tử Chính phủ - Luật số 36/2024/QH15",
+    "source_url": "https://chinhphu.vn/?classid=1&docid=211194&orggroupid=1&pageid=27160",
+    "source_type": "official_source",
     "status": "active",
-    "text": "Nếu người dùng bị đe dọa, uy hiếp, cưỡng ép, bị dọa đánh hoặc có nguy cơ bạo lực, hệ thống phải ưu tiên an toàn cá nhân, không khuyến khích tự xử và khuyến nghị liên hệ cơ quan chức năng hoặc luật sư.",
-    "plain_language_summary": "Các tình huống có đe dọa hoặc bạo lực cần escalation.",
+    "text": "Với tai nạn giao thông có hậu quả về người, tài sản hoặc có dấu hiệu tội phạm, việc xử lý có thể liên quan đến cơ quan chức năng và quy trình điều tra, xác minh. Hệ thống không nên hướng dẫn trốn tránh trách nhiệm hoặc rời khỏi hiện trường.",
+    "plain_language_summary": "Nếu tai nạn có người bị thương, tử vong hoặc thiệt hại nghiêm trọng, cần đánh dấu rủi ro cao và khuyến nghị liên hệ luật sư/cơ quan chức năng.",
     "tags": [
-      "bi_de_doa",
-      "de_doa_danh",
-      "bao_luc",
-      "uy_hiep",
-      "cuong_ep",
+      "tai_nan_giao_thong",
+      "nguoi_bi_thuong",
+      "tai_nan_nghiem_trong",
       "co_quan_chuc_nang",
-      "high_risk"
+      "high_risk",
+      "luat_su"
     ],
     "risk_notes": [
       "high_risk",
       "requires_escalation",
-      "personal_safety"
+      "do_not_evade"
     ],
     "last_checked": "2026-07-10"
   },
   {
-    "id": "high_risk_debt_001",
+    "id": "traffic_safety_001",
     "domain": "high_risk",
-    "title": "Không hỗ trợ đòi nợ bằng đe dọa hoặc cưỡng ép",
-    "source_name": "VietLaw Guide Safety Note",
+    "title": "Không hỗ trợ né phạt hoặc khai gian trong vi phạm giao thông",
+    "source_name": "VietLaw-Chat Safety Policy",
     "source_url": "",
-    "source_type": "curated_note",
+    "source_type": "safety_policy",
     "status": "active",
-    "text": "Nếu người dùng hỏi cách đe dọa, cưỡng ép, giữ tài sản, thuê người đòi nợ hoặc bêu xấu người khác để đòi tiền, hệ thống phải từ chối và chuyển sang hướng chuẩn bị chứng cứ, thương lượng hợp pháp hoặc hỏi luật sư/cơ quan chức năng.",
-    "plain_language_summary": "Không hỗ trợ tự xử hoặc đe dọa trong tranh chấp nợ.",
+    "text": "VietLaw-Chat không hỗ trợ né phạt, khai gian, xóa bằng chứng hoặc đối phó sai trái với cơ quan chức năng. Hướng an toàn là kiểm tra nội dung biên bản, chuẩn bị giấy tờ liên quan và hỏi lại cơ quan có thẩm quyền theo cách hợp pháp.",
+    "plain_language_summary": "Lưu ý an toàn cho các yêu cầu né phạt giao thông.",
     "tags": [
-      "doi_no",
-      "de_doa_doi_no",
-      "giu_tai_san",
-      "thue_nguoi_doi_no",
-      "boi_nho",
-      "refuse_unsafe_request"
+      "ne_phat",
+      "khai_gian",
+      "doi_pho",
+      "giao_thong",
+      "refuse_unsafe_request",
+      "high_risk"
     ],
     "risk_notes": [
       "high_risk",
-      "must_refuse",
-      "coercion"
-    ],
-    "last_checked": "2026-07-10"
-  },
-  {
-    "id": "general_no_source_001",
-    "domain": "unknown",
-    "title": "Không có nguồn phù hợp thì phải trả lời thận trọng",
-    "source_name": "VietLaw Guide Safety Note",
-    "source_url": "",
-    "source_type": "curated_note",
-    "status": "active",
-    "text": "Nếu RAG không tìm thấy nguồn phù hợp, hệ thống không được đưa kết luận pháp lý mạnh. Hệ thống nên hỏi thêm thông tin, nêu giới hạn của bản demo và khuyến nghị kiểm tra với luật sư hoặc cơ quan chức năng nếu vụ việc quan trọng.",
-    "plain_language_summary": "No-source behavior cho Citation Guard.",
-    "tags": [
-      "no_source",
-      "khong_co_nguon",
-      "hoi_them",
-      "can_trong",
-      "citation_guard",
-      "unknown"
-    ],
-    "risk_notes": [
-      "avoid_overclaim",
-      "ask_clarifying_questions"
-    ],
-    "last_checked": "2026-07-10"
-  },
-  {
-    "id": "general_privacy_001",
-    "domain": "unknown",
-    "title": "Không yêu cầu thông tin cá nhân nhạy cảm trong bản demo",
-    "source_name": "VietLaw Guide Safety Note",
-    "source_url": "",
-    "source_type": "curated_note",
-    "status": "active",
-    "text": "Trong bản demo, hệ thống không nên yêu cầu người dùng nhập số CCCD, tài khoản ngân hàng, địa chỉ cụ thể, số điện thoại hoặc thông tin cá nhân nhạy cảm nếu không cần thiết.",
-    "plain_language_summary": "Privacy note cho UI và chatbot.",
-    "tags": [
-      "privacy",
-      "du_lieu_ca_nhan",
-      "cccd",
-      "tai_khoan_ngan_hang",
-      "dia_chi",
-      "ban_demo"
-    ],
-    "risk_notes": [
-      "privacy",
-      "demo_safety"
-    ],
-    "last_checked": "2026-07-10"
-  },
-  {
-    "id": "general_unsupported_001",
-    "domain": "unknown",
-    "title": "Câu hỏi ngoài phạm vi bản demo",
-    "source_name": "VietLaw Guide Curated Note",
-    "source_url": "",
-    "source_type": "curated_note",
-    "status": "active",
-    "text": "Nếu câu hỏi không liên quan pháp lý hoặc nằm ngoài phạm vi MVP, hệ thống nên trả lời rằng bản demo hiện tập trung vào định hướng pháp lý ban đầu cho tranh chấp dân sự đời thường, giao thông và hộ kinh doanh nhỏ.",
-    "plain_language_summary": "Unsupported behavior cho câu hỏi không liên quan.",
-    "tags": [
-      "unsupported",
-      "ngoai_pham_vi",
-      "khong_phap_ly",
-      "unknown",
-      "ban_demo"
-    ],
-    "risk_notes": [
-      "low_risk",
-      "unsupported"
+      "unsafe_request",
+      "must_refuse"
     ],
     "last_checked": "2026-07-10"
   }

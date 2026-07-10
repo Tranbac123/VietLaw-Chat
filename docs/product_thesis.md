@@ -1,12 +1,12 @@
-# VietLaw Guide Product Thesis
+# VietLaw-Chat Product Thesis
 
 ## 1. Product Name
 
-VietLaw Guide
+VietLaw-Chat
 
 ## 2. One-liner
 
-VietLaw Guide là trợ lý định hướng pháp lý ban đầu bằng tiếng Việt, giúp người dân và hộ kinh doanh nhỏ hiểu vấn đề pháp lý phổ biến, chuẩn bị giấy tờ cần thiết, xem nguồn tham khảo và biết khi nào nên hỏi luật sư hoặc cơ quan chức năng.
+VietLaw-Chat là trợ lý định hướng pháp lý ban đầu bằng tiếng Việt, giúp người dân và hộ kinh doanh nhỏ hiểu vấn đề pháp lý phổ biến, chuẩn bị giấy tờ cần thiết, xem nguồn tham khảo và biết khi nào nên hỏi luật sư hoặc cơ quan chức năng.
 
 ---
 
@@ -18,7 +18,9 @@ Họ có thể bị giữ tiền cọc thuê nhà, không hiểu giấy phạt g
 
 Thông tin pháp luật hiện nay thường rải rác, khó đọc, nhiều văn bản dài, khó hiểu với người không chuyên. Trong khi đó, chatbot tổng quát có thể trả lời nhanh nhưng dễ trả lời quá tự tin, thiếu nguồn, hoặc đưa lời khuyên không an toàn.
 
-VietLaw Guide được xây dựng như một lớp định hướng ban đầu: không thay thế luật sư, không phán quyết đúng sai, không đảm bảo kết quả pháp lý. Sản phẩm giúp người dùng hiểu vấn đề thuộc nhóm nào, còn thiếu thông tin gì, cần chuẩn bị giấy tờ nào, có nguồn tham khảo nào liên quan, và khi nào nên gặp luật sư hoặc cơ quan chức năng.
+VietLaw-Chat được xây dựng như một lớp định hướng ban đầu: không thay thế luật sư, không phán quyết đúng sai, không đảm bảo kết quả pháp lý. Sản phẩm giúp người dùng hiểu vấn đề thuộc nhóm nào, còn thiếu thông tin gì, cần chuẩn bị giấy tờ nào, có nguồn tham khảo nào liên quan, và khi nào nên gặp luật sư hoặc cơ quan chức năng.
+
+MVP hiện tại tập trung vào Vietnamese text chat, chat continuity bằng `session_id`/`chat_id`, RAG từ nguồn curated, safety guardrails, structured response và golden/demo evaluation. Voice, OCR, file upload và bilingual legal answering là hướng mở rộng sau MVP, không phải phạm vi demo hiện tại.
 
 ---
 
@@ -81,7 +83,7 @@ Với lĩnh vực pháp lý, trả lời sai không chỉ gây khó chịu. Nó 
 
 ### 5.1. Primary Users
 
-VietLaw Guide MVP tập trung vào:
+VietLaw-Chat MVP tập trung vào:
 
 - người dân phổ thông;
 - người thuê nhà;
@@ -165,9 +167,9 @@ Sản phẩm giúp người dùng:
 
 ## 7. Product Boundary
 
-VietLaw Guide không phải là luật sư.
+VietLaw-Chat không phải là luật sư.
 
-VietLaw Guide không làm các việc sau:
+VietLaw-Chat không làm các việc sau:
 
 - không tư vấn pháp lý chính thức;
 - không thay thế luật sư;
@@ -180,7 +182,7 @@ VietLaw Guide không làm các việc sau:
 - không đưa chiến thuật khai báo trong vụ việc hình sự;
 - không bao phủ toàn bộ luật Việt Nam trong MVP.
 
-VietLaw Guide làm các việc sau:
+VietLaw-Chat làm các việc sau:
 
 - phân loại vấn đề ban đầu;
 - phát hiện rủi ro;
@@ -194,7 +196,7 @@ VietLaw Guide làm các việc sau:
 
 ## 8. Why Now
 
-Có ba lý do khiến thời điểm này phù hợp để xây dựng VietLaw Guide.
+Có ba lý do khiến thời điểm này phù hợp để xây dựng VietLaw-Chat.
 
 ### 8.1. Người dùng đã quen hỏi AI
 
@@ -226,7 +228,7 @@ Một sản phẩm tốt cần hiểu cách người Việt thực sự hỏi, k
 
 ## 9. Why This Is Not Just a Chatbot Wrapper
 
-VietLaw Guide không chỉ là giao diện gọi AI API.
+VietLaw-Chat không chỉ là giao diện gọi AI API.
 
 Sản phẩm có các lớp riêng:
 
@@ -546,7 +548,7 @@ The final response is checked before returning to frontend.
 
 ## 16. Evaluation Strategy
 
-VietLaw Guide is evaluated with golden cases.
+VietLaw-Chat is evaluated with golden cases.
 
 Evaluation checks:
 
@@ -649,7 +651,7 @@ The long-term vision is to build a Vietnamese legal access layer for ordinary pe
 
 Not an AI lawyer that replaces professionals.
 
-Instead, VietLaw Guide can become:
+Instead, VietLaw-Chat can become:
 
 - first-step legal triage;
 - document preparation assistant;
@@ -666,7 +668,7 @@ Its job is to help users arrive better prepared, with clearer questions, better 
 
 ## 19. Strategic Advantage
 
-VietLaw Guide has several advantages as a competition product:
+VietLaw-Chat has several advantages as a competition product:
 
 ### 19.1. Clear Social Value
 
@@ -801,7 +803,7 @@ The MVP does not prove:
 
 ## 22. Final Positioning Statement
 
-VietLaw Guide is a safety-first Vietnamese legal navigation assistant.
+VietLaw-Chat is a safety-first Vietnamese legal navigation assistant.
 
 It helps people understand their issue, prepare better, avoid unsafe actions and know when to seek professional help.
 

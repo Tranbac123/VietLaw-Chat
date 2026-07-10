@@ -6,7 +6,10 @@ Default workflow from repo root:
   python scripts/build_snippets.py
 
 Input:
-  data/snippets_md/*.md
+  data/snippets_md/**/*.md
+
+Authoring rule:
+  ## Plain summary is required for MVP compiler validation, even though the RAG spec describes it as recommended for human authoring. This keeps runtime JSON stable.
 
 Output:
   data/legal_snippets.json
@@ -252,7 +255,7 @@ def parse_snippet(path: Path) -> dict[str, Any]:
 
 
 def build(input_dir: Path, output_file: Path) -> list[dict[str, Any]]:
-    markdown_files = sorted(input_dir.glob("*.md"))
+    markdown_files = sorted(input_dir.rglob("*.md"))
     markdown_files = [p for p in markdown_files if p.name.lower() != "readme.md"]
     if not markdown_files:
         raise SnippetBuildError(f"No snippet Markdown files found in {input_dir}")

@@ -1,7 +1,7 @@
 ---
 id: civil_rental_001
 domain: civil_dispute
-source_name: "VietLaw Guide Curated Note"
+source_name: "VietLaw-Chat Curated Note"
 source_url: ""
 source_type: curated_note
 status: active

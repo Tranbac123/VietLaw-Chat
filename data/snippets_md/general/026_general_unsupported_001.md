@@ -1,7 +1,7 @@
 ---
 id: general_unsupported_001
 domain: unknown
-source_name: "VietLaw Guide Curated Note"
+source_name: "VietLaw-Chat Curated Note"
 source_url: ""
 source_type: curated_note
 status: active
