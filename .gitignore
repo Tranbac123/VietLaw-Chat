@@ -148,6 +148,9 @@ recordings/
 !demo/*.mp4
 !demo/README.md
 
+# docs
+/docs/audit/
+/docs/archive/
 
 # ---------------------------------------------------------
 # Package / lock files policy
