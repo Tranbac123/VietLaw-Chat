@@ -409,7 +409,7 @@ Frontend should define types aligned with `docs/api_contract.md`.
 ```ts
 type ContractVersion = "v1";
 
-type UserType = "citizen" | "household_business" | "sme" | "unknown";
+type UserType = "citizen" | "household_business" | "foreign_visitor" | "unknown";
 
 type Language = "vi";
 
@@ -533,6 +533,7 @@ type ContentType = "text" | "structured";
 
 type ChatMessage = {
   message_id: string;
+  chat_id: string;
   role: "user" | "assistant";
   content_type: ContentType;
   content_text: string | null;
@@ -551,6 +552,8 @@ type AnalyzeContent = Pick<
   | "next_steps"
   | "sources"
   | "safety_notice"
+  | "confidence"
+  | "metadata"
 >;
 
 type ChatDetailResponse = {
@@ -574,6 +577,8 @@ type ApiErrorResponse = {
 };
 ```
 
+The backend response schemas above remain authoritative and must include all fields required by `docs/api_contract.md`. Frontend types may intentionally omit additive response-envelope fields such as `contract_version`, `request_id`, `session_id`, or top-level `safety_notice` when a component does not need them for rendering. Ignoring those additive fields does not remove the backend requirement to return them.
+
 ---
 
 ## 10. Message Rendering Contract
@@ -586,10 +591,13 @@ For:
 
 ```json
 {
+  "message_id": "msg_user_001",
+  "chat_id": "chat_001",
   "role": "user",
   "content_type": "text",
   "content_text": "Tôi thuê nhà, chủ nhà giữ tiền cọc...",
-  "content_json": null
+  "content_json": null,
+  "created_at": "2026-07-10T14:00:00+07:00"
 }
 ```
 
@@ -601,6 +609,8 @@ For:
 
 ```json
 {
+  "message_id": "msg_asst_001",
+  "chat_id": "chat_001",
   "role": "assistant",
   "content_type": "structured",
   "content_text": null,
@@ -613,8 +623,15 @@ For:
     "checklist": [],
     "next_steps": [],
     "sources": [],
-    "safety_notice": "..."
-  }
+    "safety_notice": "...",
+    "confidence": {
+      "domain": 0.85,
+      "risk": 0.75,
+      "answer": 0.7
+    },
+    "metadata": {}
+  },
+  "created_at": "2026-07-10T14:00:03+07:00"
 }
 ```
 
@@ -1070,6 +1087,7 @@ When appending locally after `POST /api/analyze`, the response does not return f
 ```text
 User message:
 - message_id = response.user_message_id
+- chat_id = response.chat_id
 - role = "user"
 - content_type = "text"
 - content_text = the exact question string sent in AnalyzeRequest
@@ -1077,6 +1095,7 @@ User message:
 
 Assistant message:
 - message_id = response.assistant_message_id
+- chat_id = response.chat_id
 - role = "assistant"
 - content_type = "structured"
 - content_text = null
@@ -1086,7 +1105,7 @@ Assistant message:
 `AnalyzeContent` fields are:
 
 ```text
-domain, risk_level, decision, summary, clarifying_questions, checklist, next_steps, sources, safety_notice
+domain, risk_level, decision, summary, clarifying_questions, checklist, next_steps, sources, safety_notice, confidence, metadata
 ```
 
 Reloading the same chat through `GET /api/chats/{chat_id}` must render equivalent user and assistant messages. This is an acceptance check against optimistic-render/storage-render drift.
@@ -1297,4 +1316,3 @@ For MVP v1:
 8. Frontend must treat `confidence` as debug/internal only.
 9. Frontend must not imply cross-chat memory.
 10. Voice, bilingual answering, OCR, upload, login, and long-term memory are V2+ backlog, not MVP v1.
-

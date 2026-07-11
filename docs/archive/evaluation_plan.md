@@ -140,7 +140,7 @@ risk
 answer
 ```
 
-Do not add non-contract fields such as `confidence.retrieval` to eval expectations.
+Keep eval confidence expectations limited to the contract fields `domain`, `risk`, and `answer`.
 
 ---
 

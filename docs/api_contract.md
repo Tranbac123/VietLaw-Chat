@@ -96,6 +96,7 @@ These future features must not complicate the MVP API unless needed for the curr
 8. Other chat threads must not be used as context by default.
 9. No API key, stack trace, provider error, hidden prompt, or private debug log should be exposed to the frontend.
 10. The contract must be deterministic enough for frontend rendering and automated evaluation.
+11. Frontend consumers may ignore additive response-envelope fields that they do not need for rendering, but the backend must still return every field required by this contract.
 
 ---
 
@@ -287,7 +288,7 @@ It can also be used by the evaluation script. For eval, each case should start f
 | Field        | Type   |    Required | Rules                                                                                    |
 | ------------ | ------ | ----------: | ---------------------------------------------------------------------------------------- |
 | `question`   | string |         yes | Vietnamese user message. Trim whitespace. `min_length: 3`, `max_length: 3000`.           |
-| `user_type`  | string |          no | `citizen`, `household_business`, `sme`, `unknown`. Default: `unknown`.                   |
+| `user_type`  | string |          no | `citizen`, `household_business`, `foreign_visitor`, `unknown`. Default: `unknown`.       |
 | `chat_id`    | string |          no | If omitted, backend must create a new chat and return `chat_id`.                         |
 | `session_id` | string | conditional | Required when `chat_id` is omitted. Optional when `chat_id` is provided. Max length 128. |
 | `language`   | string |          no | MVP supports `vi`. Default: `vi`.                                                        |
@@ -558,6 +559,7 @@ Response:
   "messages": [
     {
       "message_id": "msg_user_001",
+      "chat_id": "chat_001",
       "role": "user",
       "content_type": "text",
       "content_text": "Tôi thuê nhà, chủ nhà giữ tiền cọc 2 tháng không trả, tôi phải làm gì?",
@@ -566,6 +568,7 @@ Response:
     },
     {
       "message_id": "msg_asst_001",
+      "chat_id": "chat_001",
       "role": "assistant",
       "content_type": "structured",
       "content_text": null,
@@ -578,7 +581,16 @@ Response:
         "checklist": [],
         "next_steps": [],
         "sources": [],
-        "safety_notice": "Thông tin này chỉ mang tính định hướng ban đầu, không thay thế tư vấn pháp lý chính thức. Nếu vụ việc có tranh chấp lớn, rủi ro hình sự, quyền lợi quan trọng hoặc bạn không chắc nên làm gì, hãy tham khảo luật sư hoặc cơ quan chức năng."
+        "safety_notice": "Thông tin này chỉ mang tính định hướng ban đầu, không thay thế tư vấn pháp lý chính thức. Nếu vụ việc có tranh chấp lớn, rủi ro hình sự, quyền lợi quan trọng hoặc bạn không chắc nên làm gì, hãy tham khảo luật sư hoặc cơ quan chức năng.",
+        "confidence": {
+          "domain": 0.85,
+          "risk": 0.75,
+          "answer": 0.7
+        },
+        "metadata": {
+          "retrieval_count": 0,
+          "has_sources": false
+        }
       },
       "created_at": "2026-07-10T14:00:03+07:00"
     }
@@ -593,8 +605,10 @@ Message ordering:
 
 Message rules:
 
+- Every message object includes `message_id`, `chat_id`, `role`, `content_type`, `content_text`, `content_json`, and `created_at`.
 - User messages use `content_type: text`.
 - Assistant messages use `content_type: structured`.
+- Assistant `content_json` includes `domain`, `risk_level`, `decision`, `summary`, `clarifying_questions`, `checklist`, `next_steps`, `sources`, `safety_notice`, `confidence`, and `metadata`.
 - Frontend must switch rendering by `content_type`.
 - Do not overload `content` with both string and object types.
 
