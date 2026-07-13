@@ -1,0 +1,11 @@
+# VietLaw-Chat AI Core — pinned 2026-07-11
+# Schemas / config
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+# LLM providers (anthropic + OpenAI-compatible only, per scope)
+anthropic==0.116.0
+openai==2.45.0
+
+# Tests
+pytest==9.1.1
