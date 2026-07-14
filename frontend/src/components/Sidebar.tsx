@@ -11,7 +11,7 @@ interface SidebarProps {
 
 export function Sidebar({ chats, activeChatId, loading, onNewChat, onSelectChat }: SidebarProps) {
   return (
-    <aside className="sidebar" aria-label="Danh sách cuộc trò chuyện">
+    <aside className="sidebar" aria-label="Lịch sử chat">
       <div className="sidebar-brand">
         <span className="brand-symbol" aria-hidden="true">V</span>
         <div>
@@ -26,7 +26,7 @@ export function Sidebar({ chats, activeChatId, loading, onNewChat, onSelectChat 
       </button>
 
       <div className="sidebar-conversations">
-        <p className="sidebar-section-title">Cuộc trò chuyện</p>
+        <p className="sidebar-section-title">Lịch sử chat</p>
         <ConversationList
           chats={chats}
           activeChatId={activeChatId}

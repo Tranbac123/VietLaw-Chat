@@ -1,10 +1,13 @@
+import { useId } from 'react';
 import type { SourceObject } from '../api/types';
 import { formatSourceType } from '../lib/format';
 
 export function SourcePanel({ sources }: { sources: SourceObject[] }) {
+  const headingId = useId();
+
   return (
-    <section className="answer-section source-panel" aria-labelledby="source-heading">
-      <h3 id="source-heading">Nguồn tham khảo</h3>
+    <section className="answer-section source-panel" aria-labelledby={headingId}>
+      <h3 id={headingId}>Nguồn tham khảo</h3>
       {sources.length === 0 ? (
         <p className="source-empty">Chưa có nguồn phù hợp trong tập dữ liệu MVP. Câu trả lời cần được xem là định hướng thận trọng.</p>
       ) : (
@@ -22,7 +25,7 @@ export function SourcePanel({ sources }: { sources: SourceObject[] }) {
               <div className="source-footer">
                 <span>Kiểm tra: {source.last_checked}</span>
                 {source.url && (
-                  <a href={source.url} target="_blank" rel="noreferrer">Mở nguồn</a>
+                  <a href={source.url} target="_blank" rel="noopener noreferrer">Mở nguồn</a>
                 )}
               </div>
             </li>

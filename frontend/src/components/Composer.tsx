@@ -1,70 +1,104 @@
-import { useState, type FormEvent, type KeyboardEvent } from 'react';
-import type { UserType } from '../api/types';
+import { useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react';
 
 interface ComposerProps {
-  disabled: boolean;
-  userType: UserType;
-  onUserTypeChange: (userType: UserType) => void;
-  onSend: (question: string) => void;
+  inputDisabled: boolean;
+  submitDisabled: boolean;
+  isEmptyChat: boolean;
+  onSend: (question: string) => Promise<boolean>;
 }
 
-export function Composer({ disabled, userType, onUserTypeChange, onSend }: ComposerProps) {
+const MAX_ROWS = 10;
+
+export function Composer({ inputDisabled, submitDisabled, isEmptyChat, onSend }: ComposerProps) {
   const [draft, setDraft] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const isInputDisabled = inputDisabled || submitting;
+  const isSubmitDisabled = submitDisabled || submitting;
 
-  function submit() {
+  function resizeTextarea() {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = 'auto';
+    const styles = window.getComputedStyle(textarea);
+    const parsedLineHeight = Number.parseFloat(styles.lineHeight);
+    const lineHeight = Number.isFinite(parsedLineHeight)
+      ? parsedLineHeight
+      : Number.parseFloat(styles.fontSize) * 1.5;
+    const maxHeight = (lineHeight * MAX_ROWS)
+      + Number.parseFloat(styles.paddingTop)
+      + Number.parseFloat(styles.paddingBottom);
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }
+
+  useLayoutEffect(() => {
+    resizeTextarea();
+  }, [draft]);
+
+  async function submit() {
     const question = draft.trim();
-    if (!question || disabled) return;
+    if (!question || isSubmitDisabled) return;
 
-    onSend(question);
-    setDraft('');
+    setSubmitting(true);
+    try {
+      const sent = await onSend(question);
+      if (sent) setDraft('');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    submit();
+    void submit();
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      submit();
+      void submit();
     }
   }
 
   return (
-    <form className="composer" onSubmit={handleSubmit}>
+    <form className={`composer ${isEmptyChat ? 'composer--landing' : 'composer--chat'}`} onSubmit={handleSubmit}>
       <div className="composer-inner">
-        <div className="composer-fields">
+        <div className="composer-input-shell">
           <textarea
+            ref={textareaRef}
             className="composer-input"
             value={draft}
-            rows={2}
+            rows={1}
             onChange={(event) => setDraft(event.target.value)}
             onKeyDown={handleKeyDown}
-            disabled={disabled}
+            disabled={isInputDisabled}
             placeholder={'Nhập câu hỏi pháp lý của bạn, ví dụ: "Tôi thuê nhà, chủ nhà giữ tiền cọc không trả..."'}
             aria-label="Câu hỏi pháp lý"
           />
-          <div className="composer-options">
-            <label>
-              Nhóm người dùng
-              <select
-                value={userType}
-                disabled={disabled}
-                onChange={(event) => onUserTypeChange(event.target.value as UserType)}
-              >
-                <option value="citizen">Người dân</option>
-                <option value="household_business">Hộ kinh doanh</option>
-                <option value="foreign_visitor">Khách nước ngoài</option>
-                <option value="unknown">Chưa xác định</option>
-              </select>
-            </label>
-            <p>Không nhập số CCCD, tài khoản ngân hàng, địa chỉ cụ thể hoặc thông tin nhạy cảm.</p>
-          </div>
+          <button
+            className="send-button"
+            type="submit"
+            disabled={isSubmitDisabled || !draft.trim()}
+            aria-label="Gửi câu hỏi"
+            title="Gửi câu hỏi"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 19V5m0 0-5 5m5-5 5 5" />
+            </svg>
+          </button>
         </div>
-        <button className="send-button" type="submit" disabled={disabled || !draft.trim()}>
-          {disabled ? 'Đang phân tích' : 'Gửi'}
-        </button>
+        <div className="composer-notices">
+          <p className="composer-privacy">Không nhập số CCCD, tài khoản ngân hàng, địa chỉ cụ thể hoặc thông tin nhạy cảm.</p>
+          {isEmptyChat && (
+            <p className="composer-legal-reference">
+              Thông tin chỉ mang tính tham khảo, không thay thế tư vấn của luật sư hoặc hướng dẫn của cơ quan pháp lý có thẩm quyền.
+            </p>
+          )}
+        </div>
       </div>
     </form>
   );

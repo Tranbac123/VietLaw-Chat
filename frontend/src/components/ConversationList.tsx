@@ -9,8 +9,8 @@ interface ConversationListProps {
 }
 
 export function ConversationList({ chats, activeChatId, loading, onSelect }: ConversationListProps) {
-  if (loading) return <p className="conversation-status">Đang tải cuộc trò chuyện...</p>;
-  if (chats.length === 0) return <p className="conversation-status">Chưa có cuộc trò chuyện nào.</p>;
+  if (loading) return <p className="conversation-status">Đang tải lịch sử chat...</p>;
+  if (chats.length === 0) return <p className="conversation-status">Chưa có lịch sử chat nào.</p>;
 
   return (
     <ul className="conversation-list">
