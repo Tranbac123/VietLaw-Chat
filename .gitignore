@@ -88,15 +88,12 @@ logs/
 # Node / Vite frontend
 # ---------------------------------------------------------
 node_modules/
+.vite/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-
-web/node_modules/
-web/dist/
-web/build/
-web/.vite/
 
 .next/
 .nuxt/
