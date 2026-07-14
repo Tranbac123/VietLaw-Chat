@@ -1,0 +1,187 @@
+# Right-sized evaluation CI.
+#
+# PR/push: evaluator self-tests + smoke against backend_lite.
+# Optional MVP gate: enabled only after the repository variable
+# ENABLE_MVP_GATE=true is set for a known-green baseline.
+# Full/nightly/load: scheduled or manual diagnostic artifacts, never a PR gate.
+
+name: evaluation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Diagnostic suite to run
+        default: full
+        type: choice
+        options: [smoke, mvp, pr, full, nightly]
+
+jobs:
+  self-test:
+    name: Harness self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install evaluator
+        run: python -m pip install -r evaluation/requirements.txt
+      - name: Validate schemas and suite definitions
+        run: python -m evaluation.cli validate
+      - name: Evaluator unit and negative-control tests
+        run: python -m pytest evaluation/tests -q
+      - name: Fault-injection self-test
+        run: python -m evaluation.cli faults --report-dir outputs/eval
+      - name: Upload self-test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-self-test
+          path: outputs/eval/
+          retention-days: 14
+
+  smoke:
+    name: Required backend_lite smoke
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    needs: self-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install -r evaluation/requirements.txt
+          python -m pip install -r backend_lite/requirements.txt
+      - name: Start backend_lite with an isolated DB
+        env:
+          BACKEND_MODE: lite
+          CHAT_DB_PATH: /tmp/vietlaw_eval_ci_smoke.sqlite3
+          LEGAL_SNIPPETS_PATH: ${{ github.workspace }}/data/legal_snippets.json
+          UNSAFE_PATTERNS_PATH: ${{ github.workspace }}/data/unsafe_patterns.json
+        run: |
+          python -m uvicorn backend_lite.app.main:app --host 127.0.0.1 --port 8010 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8010/api/health && break
+            sleep 1
+          done
+      - name: Smoke suite
+        run: |
+          python -m evaluation.cli run \
+            --base-url http://127.0.0.1:8010 \
+            --suite smoke --seed 20260713 \
+            --report-dir outputs/eval --no-color
+      - name: Frozen legacy compatibility
+        run: python scripts/run_eval.py --base-url http://127.0.0.1:8010
+      - name: Upload smoke reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-smoke
+          path: outputs/eval/
+          retention-days: 14
+
+  mvp-gate:
+    name: Optional reviewed MVP gate
+    if: >-
+      (github.event_name == 'pull_request' || github.event_name == 'push') &&
+      vars.ENABLE_MVP_GATE == 'true'
+    runs-on: ubuntu-latest
+    needs: [self-test, smoke]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install -r evaluation/requirements.txt
+          python -m pip install -r backend_lite/requirements.txt
+      - name: Start backend_lite with an isolated DB
+        env:
+          BACKEND_MODE: lite
+          CHAT_DB_PATH: /tmp/vietlaw_eval_ci_mvp.sqlite3
+          LEGAL_SNIPPETS_PATH: ${{ github.workspace }}/data/legal_snippets.json
+          UNSAFE_PATTERNS_PATH: ${{ github.workspace }}/data/unsafe_patterns.json
+        run: |
+          python -m uvicorn backend_lite.app.main:app --host 127.0.0.1 --port 8010 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8010/api/health && break
+            sleep 1
+          done
+      - name: Reviewed MVP suite
+        run: |
+          python -m evaluation.cli run \
+            --base-url http://127.0.0.1:8010 \
+            --suite mvp --seed 20260713 \
+            --report-dir outputs/eval --no-color
+      - name: Upload MVP reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-mvp
+          path: outputs/eval/
+          retention-days: 14
+
+  diagnostic:
+    name: Non-blocking nightly/manual diagnostic
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    needs: self-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install
+        run: |
+          python -m pip install -r evaluation/requirements.txt
+          python -m pip install -r backend_lite/requirements.txt
+      - name: Start backend_lite with an isolated DB
+        env:
+          BACKEND_MODE: lite
+          CHAT_DB_PATH: /tmp/vietlaw_eval_ci_diagnostic.sqlite3
+          LEGAL_SNIPPETS_PATH: ${{ github.workspace }}/data/legal_snippets.json
+          UNSAFE_PATTERNS_PATH: ${{ github.workspace }}/data/unsafe_patterns.json
+        run: |
+          python -m uvicorn backend_lite.app.main:app --host 127.0.0.1 --port 8010 &
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8010/api/health && break
+            sleep 1
+          done
+      - name: Choose diagnostic suite
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "suite=nightly" >> "$GITHUB_OUTPUT"
+          else
+            echo "suite=${{ inputs.suite }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run diagnostic suite
+        run: |
+          python -m evaluation.cli run \
+            --base-url http://127.0.0.1:8010 \
+            --suite ${{ steps.pick.outputs.suite }} \
+            --seed 20260713 \
+            --report-dir outputs/eval --no-color
+      - name: MVP load measurement
+        if: always()
+        run: |
+          python -m evaluation.cli load \
+            --base-url http://127.0.0.1:8010 \
+            --profile mvp --report-dir outputs/eval
+      - name: Upload diagnostic reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-diagnostic-${{ steps.pick.outputs.suite }}
+          path: outputs/eval/
+          retention-days: 14
