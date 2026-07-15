@@ -334,7 +334,7 @@ class StoredResponse(StrictModel):
 
 
 class BeginRequestResult(StrictModel):
-    kind: Literal["accepted", "duplicate", "in_progress", "retry"]
+    kind: Literal["accepted", "duplicate", "in_progress", "retry", "attempts_exhausted"]
     status: RequestStatus
     identity: RequestIdentity
     should_execute: bool
@@ -356,6 +356,19 @@ class BeginRequestInProgress(BeginRequestResult):
 
 class BeginRequestRetry(BeginRequestResult):
     kind: Literal["retry"] = "retry"
+
+
+class BeginRequestAttemptsExhausted(BeginRequestResult):
+    kind: Literal["attempts_exhausted"] = "attempts_exhausted"
+    processing_deadline_at: datetime
+    version_stamps: VersionStamps
+
+    @field_validator("processing_deadline_at")
+    @classmethod
+    def require_deadline_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("processing deadline must be timezone-aware")
+        return value
 
 
 class CompleteRequest(StrictModel):
@@ -386,6 +399,7 @@ __all__ = [
     "AnswerPlan",
     "BeginRequest",
     "BeginRequestAccepted",
+    "BeginRequestAttemptsExhausted",
     "BeginRequestDuplicate",
     "BeginRequestInProgress",
     "BeginRequestResult",

@@ -44,10 +44,14 @@ def _connect(path: Path) -> sqlite3.Connection:
     return connection
 
 
-def _ready(path: Path, clock: FixedClock | None = None) -> SQLiteRequestChatStore:
+def _ready(
+    path: Path,
+    clock: FixedClock | None = None,
+    **store_options: object,
+) -> SQLiteRequestChatStore:
     SQLiteChatStore(path).bootstrap_base_schema()
     SQLiteMigrator(path, now_factory=lambda: "2026-07-14T00:00:00+00:00").migrate()
-    return SQLiteRequestChatStore(path, clock or FixedClock())
+    return SQLiteRequestChatStore(path, clock or FixedClock(), **store_options)
 
 
 def _stamps() -> VersionStamps:

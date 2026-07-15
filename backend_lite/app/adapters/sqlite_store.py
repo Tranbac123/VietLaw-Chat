@@ -12,14 +12,13 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
-
 from pydantic import ValidationError
 
 from ..application.ports import Clock
 from ..contracts.internal import (
     BeginRequest,
     BeginRequestAccepted,
+    BeginRequestAttemptsExhausted,
     BeginRequestDuplicate,
     BeginRequestInProgress,
     BeginRequestResult,
@@ -49,6 +48,14 @@ class SQLiteRequestStoreError(RuntimeError):
 
 class StoreSchemaError(SQLiteRequestStoreError):
     """The explicit A2a bootstrap/migration precondition was not met."""
+
+
+class StoreBusyError(SQLiteRequestStoreError):
+    """SQLite could not acquire the required lock within the configured timeout."""
+
+
+class StoreDatabaseError(SQLiteRequestStoreError):
+    """An unexpected non-busy SQLite failure occurred."""
 
 
 class RequestOwnershipError(SQLiteRequestStoreError):
@@ -87,6 +94,44 @@ _CONTENT_KEYS = (
     "confidence",
     "metadata",
 )
+PROCESSING_TIMEOUT_SECONDS = 120
+MAX_ATTEMPTS = 3
+
+
+def _is_sqlite_busy(error: sqlite3.DatabaseError) -> bool:
+    """Classify only SQLite BUSY/LOCKED conditions, including extended codes."""
+
+    code = getattr(error, "sqlite_errorcode", None)
+    if isinstance(code, int) and code & 0xFF in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+        return True
+    message = str(error).strip().casefold()
+    return any(
+        message == known or message.startswith(f"{known}:")
+        for known in (
+            "database is busy",
+            "database is locked",
+            "database schema is locked",
+            "database table is locked",
+        )
+    )
+
+
+def _raise_store_database_error(error: sqlite3.DatabaseError) -> None:
+    if _is_sqlite_busy(error):
+        raise StoreBusyError("SQLite store lock timed out") from None
+    raise StoreDatabaseError("unexpected SQLite store failure") from None
+
+
+def _rollback_quietly(connection: sqlite3.Connection) -> None:
+    """Best-effort rollback without replacing the operation's original failure."""
+
+    if not connection.in_transaction:
+        return
+    try:
+        connection.rollback()
+    except sqlite3.DatabaseError:
+        # Closing below is the final rollback boundary if SQLite itself is failing.
+        pass
 
 
 def _canonical_json(value: object) -> str:
@@ -128,6 +173,13 @@ def _parse_timestamp(value: object, field: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _parse_canonical_utc_timestamp(value: object, field: str) -> datetime:
+    parsed = _parse_timestamp(value, field)
+    if value != _utc_timestamp(parsed):
+        raise DurableRowError(f"durable {field} is not a canonical UTC timestamp")
+    return parsed
+
+
 def _safe_error_details(details: dict[str, object]) -> dict[str, object]:
     folded_keys = {key.casefold() for key in details}
     if folded_keys & _FORBIDDEN_ERROR_DETAIL_KEYS:
@@ -164,34 +216,105 @@ def _validated_version_stamps(stamps: VersionStamps) -> VersionStamps:
 class _DurableRequest:
     identity: RequestIdentity
     status: RequestStatus
+    version_stamps: VersionStamps
     response_payload: dict[str, object] | None
     error_code: str | None
-    created_at: str
-    updated_at: str
-    completed_at: str | None
-    failed_at: str | None
+    created_at: datetime
+    processing_started_at: datetime
+    processing_deadline_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None
+    failed_at: datetime | None
 
 
 class SQLiteRequestChatStore:
-    """Implement ``ChatStore`` with short sequential SQLite transactions only."""
+    """Implement ``ChatStore`` with short serialized SQLite transactions."""
 
-    def __init__(self, db_path: Path, clock: Clock) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        clock: Clock,
+        *,
+        busy_timeout_ms: int = 5000,
+        processing_timeout_seconds: int = PROCESSING_TIMEOUT_SECONDS,
+        max_attempts: int = MAX_ATTEMPTS,
+    ) -> None:
+        if isinstance(busy_timeout_ms, bool) or not isinstance(busy_timeout_ms, int):
+            raise TypeError("busy_timeout_ms must be an integer")
+        if busy_timeout_ms < 0:
+            raise ValueError("busy_timeout_ms must be non-negative")
+        for name, value in (
+            ("processing_timeout_seconds", processing_timeout_seconds),
+            ("max_attempts", max_attempts),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer")
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if processing_timeout_seconds != PROCESSING_TIMEOUT_SECONDS:
+            raise ValueError(
+                f"processing_timeout_seconds is fixed at {PROCESSING_TIMEOUT_SECONDS} for Gate A"
+            )
+        if max_attempts != MAX_ATTEMPTS:
+            raise ValueError(f"max_attempts is fixed at {MAX_ATTEMPTS} for Gate A")
         self.db_path = Path(db_path)
         self._clock = clock
+        self._busy_timeout_ms = busy_timeout_ms
+        self._processing_timeout = timedelta(seconds=PROCESSING_TIMEOUT_SECONDS)
+        self._max_attempts = MAX_ATTEMPTS
 
     def _checkpoint(self, _name: str) -> None:
         """Private test seam; production code has no externally exposed hook."""
 
+    def _clock_now(self) -> datetime:
+        return _parse_timestamp(_utc_timestamp(self._clock.now_utc()), "clock.now_utc")
+
+    def _attempt_window(
+        self,
+        *,
+        durable: _DurableRequest | None = None,
+        observed_now: datetime | None = None,
+    ) -> tuple[datetime, datetime]:
+        started_at = observed_now or self._clock_now()
+        if durable is not None:
+            high_water = max(
+                value
+                for value in (
+                    durable.processing_started_at,
+                    durable.updated_at,
+                    durable.failed_at,
+                )
+                if value is not None
+            )
+            started_at = max(started_at, high_water + timedelta(microseconds=1))
+        return started_at, started_at + self._processing_timeout
+
     def _connect(self) -> sqlite3.Connection:
         if not self.db_path.is_file():
             raise StoreSchemaError("A2a base schema and migration must be applied explicitly before store use")
-        connection = sqlite3.connect(self.db_path, timeout=10)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
-        if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+        try:
+            connection = sqlite3.connect(
+                self.db_path,
+                timeout=self._busy_timeout_ms / 1000,
+            )
+        except sqlite3.DatabaseError as exc:
+            _raise_store_database_error(exc)
+        try:
+            connection.row_factory = sqlite3.Row
+            connection.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+            configured_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+            if configured_timeout != self._busy_timeout_ms:
+                raise StoreSchemaError("failed to configure SQLite busy timeout")
+            connection.execute("PRAGMA foreign_keys = ON")
+            if connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+                raise StoreSchemaError("failed to enable SQLite foreign keys")
+            return connection
+        except sqlite3.DatabaseError as exc:
             connection.close()
-            raise StoreSchemaError("failed to enable SQLite foreign keys")
-        return connection
+            _raise_store_database_error(exc)
+        except Exception:
+            connection.close()
+            raise
 
     def _verify_ready_schema(self, connection: sqlite3.Connection) -> None:
         try:
@@ -199,7 +322,11 @@ class SQLiteRequestChatStore:
             verify_schema_migrations(connection)
             verify_analysis_requests(connection)
             versions = [row["version"] for row in connection.execute("SELECT version FROM schema_migrations")]
-        except (BaseSchemaError, MigrationError, sqlite3.DatabaseError) as exc:
+        except sqlite3.DatabaseError as exc:
+            if _is_sqlite_busy(exc):
+                _raise_store_database_error(exc)
+            raise StoreSchemaError("A2a base schema and migration must be exact before store use") from exc
+        except (BaseSchemaError, MigrationError) as exc:
             raise StoreSchemaError("A2a base schema and migration must be exact before store use") from exc
         if versions != [MIGRATION_VERSION]:
             raise StoreSchemaError("A2a migration version is missing, unknown, or duplicated")
@@ -207,12 +334,17 @@ class SQLiteRequestChatStore:
     def _begin(self) -> sqlite3.Connection:
         connection = self._connect()
         try:
+            self._checkpoint("before_begin_immediate")
             connection.execute("BEGIN IMMEDIATE")
             self._verify_ready_schema(connection)
+            self._checkpoint("after_begin_immediate")
             return connection
+        except sqlite3.DatabaseError as exc:
+            _rollback_quietly(connection)
+            connection.close()
+            _raise_store_database_error(exc)
         except Exception:
-            if connection.in_transaction:
-                connection.rollback()
+            _rollback_quietly(connection)
             connection.close()
             raise
 
@@ -251,8 +383,12 @@ class SQLiteRequestChatStore:
         status: RequestStatus,
         identity: RequestIdentity,
         response_payload: dict[str, object] | None,
-        completed_at: object,
-        failed_at: object,
+        created_at: datetime,
+        processing_started_at: datetime,
+        processing_deadline_at: datetime,
+        updated_at: datetime,
+        completed_at: datetime | None,
+        failed_at: datetime | None,
         error_class: object,
         last_error_code: object,
         error_details: dict[str, object] | None,
@@ -275,9 +411,19 @@ class SQLiteRequestChatStore:
         )
         if status is RequestStatus.RECEIVED:
             raise DurableRowError("committed RECEIVED durable request is invalid")
+        if identity.attempt_count > self._max_attempts:
+            raise DurableRowError("durable request attempt count exceeds configured maximum")
+        if processing_started_at < created_at:
+            raise DurableRowError("durable processing start precedes request creation")
+        if processing_deadline_at != processing_started_at + self._processing_timeout:
+            raise DurableRowError("durable processing deadline does not match configured timeout")
+        if updated_at < processing_started_at:
+            raise DurableRowError("durable request update precedes processing start")
         if status is RequestStatus.PROCESSING:
             if not no_terminal_or_failure_fields:
                 raise DurableRowError("PROCESSING durable request retains terminal or failure fields")
+            if updated_at != processing_started_at:
+                raise DurableRowError("PROCESSING durable request timestamps are inconsistent")
             return
 
         if status is RequestStatus.COMPLETE:
@@ -326,9 +472,13 @@ class SQLiteRequestChatStore:
             status = RequestStatus(row["status"])
         except (KeyError, TypeError, ValueError) as exc:
             raise DurableRowError("durable request has an unknown status") from exc
+        if status is RequestStatus.RECEIVED:
+            raise DurableRowError("committed RECEIVED durable request is invalid")
         attempt_count = row["attempt_count"]
         if isinstance(attempt_count, bool) or not isinstance(attempt_count, int) or attempt_count < 1:
             raise DurableRowError("durable request has an invalid attempt count")
+        if attempt_count > self._max_attempts:
+            raise DurableRowError("durable request attempt count exceeds configured maximum")
         try:
             identity = RequestIdentity(
                 session_id=row["session_id"],
@@ -344,7 +494,7 @@ class SQLiteRequestChatStore:
                 idempotency_key_digest_version=row["idempotency_key_version"],
                 attempt_count=attempt_count,
             )
-            _validated_version_stamps(VersionStamps(
+            version_stamps = _validated_version_stamps(VersionStamps(
                 contract_version=row["contract_version"],
                 corpus_version=row["corpus_version"],
                 policy_version=row["policy_version"],
@@ -353,13 +503,24 @@ class SQLiteRequestChatStore:
                 generator_mode=row["generator_mode"],
                 generator_version=row["generator_version"],
             ))
-            _parse_timestamp(row["created_at"], "request.created_at")
-            _parse_timestamp(row["processing_started_at"], "request.processing_started_at")
-            _parse_timestamp(row["updated_at"], "request.updated_at")
-            if row["completed_at"] is not None:
+            created_at = _parse_timestamp(row["created_at"], "request.created_at")
+            processing_started_at = _parse_canonical_utc_timestamp(
+                row["processing_started_at"], "request.processing_started_at"
+            )
+            processing_deadline_at = _parse_canonical_utc_timestamp(
+                row["processing_deadline_at"], "request.processing_deadline_at"
+            )
+            updated_at = _parse_timestamp(row["updated_at"], "request.updated_at")
+            completed_at = (
                 _parse_timestamp(row["completed_at"], "request.completed_at")
-            if row["failed_at"] is not None:
+                if row["completed_at"] is not None
+                else None
+            )
+            failed_at = (
                 _parse_timestamp(row["failed_at"], "request.failed_at")
+                if row["failed_at"] is not None
+                else None
+            )
         except (ValidationError, ValueError, TypeError) as exc:
             raise DurableRowError("durable request identity or version stamps are invalid") from exc
 
@@ -375,8 +536,12 @@ class SQLiteRequestChatStore:
             status=status,
             identity=identity,
             response_payload=payload,
-            completed_at=row["completed_at"],
-            failed_at=row["failed_at"],
+            created_at=created_at,
+            processing_started_at=processing_started_at,
+            processing_deadline_at=processing_deadline_at,
+            updated_at=updated_at,
+            completed_at=completed_at,
+            failed_at=failed_at,
             error_class=row["error_class"],
             last_error_code=row["last_error_code"],
             error_details=error_details,
@@ -385,12 +550,15 @@ class SQLiteRequestChatStore:
         return _DurableRequest(
             identity=identity,
             status=status,
+            version_stamps=version_stamps,
             response_payload=payload,
             error_code=row["last_error_code"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            completed_at=row["completed_at"],
-            failed_at=row["failed_at"],
+            created_at=created_at,
+            processing_started_at=processing_started_at,
+            processing_deadline_at=processing_deadline_at,
+            updated_at=updated_at,
+            completed_at=completed_at,
+            failed_at=failed_at,
         )
 
     @staticmethod
@@ -510,6 +678,79 @@ class SQLiteRequestChatStore:
             )
         raise DurableRowError("durable request has no valid duplicate outcome")
 
+    @staticmethod
+    def _attempts_exhausted(durable: _DurableRequest) -> BeginRequestAttemptsExhausted:
+        return BeginRequestAttemptsExhausted(
+            status=durable.status,
+            identity=durable.identity,
+            should_execute=False,
+            user_message_created=False,
+            processing_deadline_at=durable.processing_deadline_at,
+            version_stamps=durable.version_stamps,
+        )
+
+    def _claim_next_attempt(
+        self,
+        connection: sqlite3.Connection,
+        durable: _DurableRequest,
+        *,
+        observed_now: datetime,
+    ) -> BeginRequestRetry:
+        status = durable.status
+        if status not in {RequestStatus.PROCESSING, RequestStatus.FAILED_RETRYABLE}:
+            raise RequestStateError("request state is not eligible for another attempt")
+        started_at, deadline_at = self._attempt_window(
+            durable=durable,
+            observed_now=observed_now,
+        )
+        started_text = _utc_timestamp(started_at)
+        deadline_text = _utc_timestamp(deadline_at)
+        transitioned = connection.execute(
+            """
+            UPDATE analysis_requests
+            SET status = ?, attempt_count = ?, error_class = NULL,
+                last_error_code = NULL, error_details_json = NULL,
+                response_payload = NULL, failed_at = NULL,
+                processing_started_at = ?, processing_deadline_at = ?, updated_at = ?
+            WHERE session_id = ? AND request_id = ? AND status = ?
+              AND attempt_count = ? AND processing_deadline_at = ?
+              AND request_fingerprint = ?
+            """,
+            (
+                RequestStatus.PROCESSING.value,
+                durable.identity.attempt_count + 1,
+                started_text,
+                deadline_text,
+                started_text,
+                durable.identity.session_id,
+                durable.identity.request_id,
+                status.value,
+                durable.identity.attempt_count,
+                _utc_timestamp(durable.processing_deadline_at),
+                durable.identity.request_fingerprint,
+            ),
+        )
+        if transitioned.rowcount != 1:
+            raise RequestStateError("attempt claim lost durable CAS ownership")
+        checkpoint = (
+            "after_recovery_update_before_commit"
+            if status is RequestStatus.PROCESSING
+            else "after_retry_update_before_commit"
+        )
+        self._checkpoint(checkpoint)
+        refreshed = self._load_request(
+            connection,
+            durable.identity.session_id,
+            durable.identity.request_id,
+        )
+        connection.commit()
+        return BeginRequestRetry(
+            status=refreshed.status,
+            identity=refreshed.identity,
+            should_execute=True,
+            user_message_created=False,
+        )
+
     def begin_request(self, command: BeginRequest) -> BeginRequestResult:
         connection = self._begin()
         try:
@@ -526,37 +767,34 @@ class SQLiteRequestChatStore:
                     durable = self._map_request(row)
                     self._owned_chat(connection, durable.identity.chat_id or "", command.session_id)
                     self._validate_request_message_links(connection, durable)
-                    if durable.status is RequestStatus.FAILED_RETRYABLE and (
-                        durable.identity.request_fingerprint == command.request_fingerprint
-                    ):
-                        retry_time = _utc_timestamp(self._clock.now_utc())
-                        connection.execute(
-                            """
-                            UPDATE analysis_requests
-                            SET status = ?, attempt_count = ?, error_class = NULL,
-                                last_error_code = NULL, error_details_json = NULL,
-                                response_payload = NULL, failed_at = NULL,
-                                processing_started_at = ?, processing_deadline_at = NULL, updated_at = ?
-                            WHERE session_id = ? AND request_id = ? AND status = ? AND attempt_count = ?
-                            """,
-                            (
-                                RequestStatus.PROCESSING.value,
-                                durable.identity.attempt_count + 1,
-                                retry_time,
-                                retry_time,
-                                command.session_id,
-                                durable.identity.request_id,
-                                RequestStatus.FAILED_RETRYABLE.value,
-                                durable.identity.attempt_count,
-                            ),
-                        )
-                        refreshed = self._load_request(connection, command.session_id, durable.identity.request_id)
+                    if durable.identity.request_fingerprint != command.request_fingerprint:
+                        result = self._result_for_duplicate(durable, command.request_fingerprint)
                         connection.commit()
-                        return BeginRequestRetry(
-                            status=refreshed.status,
-                            identity=refreshed.identity,
-                            should_execute=True,
-                            user_message_created=False,
+                        return result
+                    if durable.status is RequestStatus.PROCESSING:
+                        observed_now = self._clock_now()
+                        if observed_now < durable.processing_deadline_at:
+                            result = self._result_for_duplicate(durable, command.request_fingerprint)
+                            connection.commit()
+                            return result
+                        if durable.identity.attempt_count >= self._max_attempts:
+                            result = self._attempts_exhausted(durable)
+                            connection.commit()
+                            return result
+                        return self._claim_next_attempt(
+                            connection,
+                            durable,
+                            observed_now=observed_now,
+                        )
+                    if durable.status is RequestStatus.FAILED_RETRYABLE:
+                        if durable.identity.attempt_count >= self._max_attempts:
+                            result = self._attempts_exhausted(durable)
+                            connection.commit()
+                            return result
+                        return self._claim_next_attempt(
+                            connection,
+                            durable,
+                            observed_now=self._clock_now(),
                         )
                     result = self._result_for_duplicate(durable, command.request_fingerprint)
                     connection.commit()
@@ -581,6 +819,10 @@ class SQLiteRequestChatStore:
             if command.user_message_id_candidate is None:
                 raise ValueError("new requests require a candidate user message ID")
             stamps = _validated_version_stamps(command.version_stamps)
+            processing_started_at = _parse_timestamp(timestamp, "new processing start")
+            processing_deadline = _utc_timestamp(
+                processing_started_at + self._processing_timeout
+            )
             connection.execute(
                 """
                 INSERT INTO analysis_requests(
@@ -589,8 +831,8 @@ class SQLiteRequestChatStore:
                     requested_chat_id, chat_id, user_type, language, user_message_id,
                     contract_version, corpus_version, policy_version, prompt_version,
                     retriever_version, generator_mode, generator_version,
-                    created_at, processing_started_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, processing_started_at, processing_deadline_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     command.session_id,
@@ -614,6 +856,7 @@ class SQLiteRequestChatStore:
                     stamps.generator_version,
                     timestamp,
                     timestamp,
+                    processing_deadline,
                     timestamp,
                 ),
             )
@@ -630,12 +873,13 @@ class SQLiteRequestChatStore:
             transitioned = connection.execute(
                 """
                 UPDATE analysis_requests
-                SET status = ?, processing_started_at = ?, updated_at = ?
+                SET status = ?, processing_started_at = ?, processing_deadline_at = ?, updated_at = ?
                 WHERE session_id = ? AND request_id = ? AND status = ?
                 """,
                 (
                     RequestStatus.PROCESSING.value,
                     timestamp,
+                    processing_deadline,
                     timestamp,
                     command.session_id,
                     command.request_id,
@@ -652,9 +896,11 @@ class SQLiteRequestChatStore:
                 should_execute=True,
                 user_message_created=True,
             )
+        except sqlite3.DatabaseError as exc:
+            _rollback_quietly(connection)
+            _raise_store_database_error(exc)
         except Exception:
-            if connection.in_transaction:
-                connection.rollback()
+            _rollback_quietly(connection)
             raise
         finally:
             connection.close()
@@ -696,7 +942,15 @@ class SQLiteRequestChatStore:
             if existing is not None:
                 raise RequestStateError("assistant candidate ID is already in use")
             chat = self._owned_chat(connection, command.chat_id, command.session_id)
-            timestamp = self._next_chat_timestamp(connection, chat)
+            timestamp = _utc_timestamp(
+                max(
+                    _parse_timestamp(
+                        self._next_chat_timestamp(connection, chat),
+                        "assistant message timestamp",
+                    ),
+                    durable.updated_at + timedelta(microseconds=1),
+                )
+            )
             connection.execute(
                 """
                 INSERT INTO messages(message_id, chat_id, role, content_type, content_text, content_json, created_at)
@@ -705,7 +959,7 @@ class SQLiteRequestChatStore:
                 (command.assistant_message_id, command.chat_id, content_json, timestamp),
             )
             self._checkpoint("after_assistant_insert_before_complete")
-            connection.execute(
+            updated = connection.execute(
                 """
                 UPDATE analysis_requests
                 SET response_payload = ?, assistant_message_id = ?, status = ?,
@@ -724,14 +978,18 @@ class SQLiteRequestChatStore:
                     command.attempt_count,
                 ),
             )
+            if updated.rowcount != 1:
+                raise RequestStateError("completion lost ownership of processing attempt")
             self._checkpoint("after_response_update_before_commit")
             connection.execute("UPDATE chats SET updated_at = ? WHERE chat_id = ?", (timestamp, command.chat_id))
             completed = self._load_request(connection, command.session_id, command.request_id)
             connection.commit()
             return self._stored_response(completed)
+        except sqlite3.DatabaseError as exc:
+            _rollback_quietly(connection)
+            _raise_store_database_error(exc)
         except Exception:
-            if connection.in_transaction:
-                connection.rollback()
+            _rollback_quietly(connection)
             raise
         finally:
             connection.close()
@@ -764,7 +1022,9 @@ class SQLiteRequestChatStore:
                 or identity.assistant_message_id is not None
             ):
                 raise RequestStateError("failure does not own the expected processing attempt")
-            timestamp = _utc_timestamp(self._clock.now_utc())
+            timestamp = _utc_timestamp(
+                max(self._clock_now(), durable.updated_at + timedelta(microseconds=1))
+            )
             updated = connection.execute(
                 """
                 UPDATE analysis_requests
@@ -791,9 +1051,11 @@ class SQLiteRequestChatStore:
             self._checkpoint("during_failure_update_before_commit")
             self._load_request(connection, command.session_id, command.request_id)
             connection.commit()
+        except sqlite3.DatabaseError as exc:
+            _rollback_quietly(connection)
+            _raise_store_database_error(exc)
         except Exception:
-            if connection.in_transaction:
-                connection.rollback()
+            _rollback_quietly(connection)
             raise
         finally:
             connection.close()
@@ -801,6 +1063,7 @@ class SQLiteRequestChatStore:
     def load_bounded_context(self, query: BoundedContextQuery) -> MinimalConversationContext:
         connection = self._connect()
         try:
+            connection.execute("BEGIN")
             self._verify_ready_schema(connection)
             self._owned_chat(connection, query.chat_id, query.session_id)
             current = connection.execute(
@@ -855,7 +1118,7 @@ class SQLiteRequestChatStore:
                         topic_id = row["message_id"]
                 if clarifications and topic is not None:
                     break
-            return MinimalConversationContext(
+            context = MinimalConversationContext(
                 current_question=query.current_question,
                 last_assistant_clarification=clarifications,
                 last_assistant_message_id=clarification_id,
@@ -864,6 +1127,14 @@ class SQLiteRequestChatStore:
                 last_confirmed_message_id=topic_id,
                 used_current_chat_history=bool(clarifications or topic),
             )
+            connection.commit()
+            return context
+        except sqlite3.DatabaseError as exc:
+            _rollback_quietly(connection)
+            _raise_store_database_error(exc)
+        except Exception:
+            _rollback_quietly(connection)
+            raise
         finally:
             connection.close()
 
@@ -874,5 +1145,7 @@ __all__ = [
     "RequestStateError",
     "SQLiteRequestChatStore",
     "SQLiteRequestStoreError",
+    "StoreBusyError",
+    "StoreDatabaseError",
     "StoreSchemaError",
 ]
