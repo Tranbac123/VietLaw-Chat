@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from app.patterns import PatternBank
-from app.safety_guard import apply
+from app.nlp.patterns import PatternBank
+from app.guards.safety_guard import apply
 from app.schemas import Decision, Domain, LLMContent, RiskLevel
 
 _DATA = Path(__file__).resolve().parents[2] / "data" / "unsafe_patterns.json"

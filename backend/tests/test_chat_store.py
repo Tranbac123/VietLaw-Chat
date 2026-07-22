@@ -1,7 +1,7 @@
 """ChatStore tests."""
 import pytest
 
-from app.chat_store import ChatStore
+from app.stores.chat_store import ChatStore
 from app.errors import ChatNotFound, InvalidRequest
 
 

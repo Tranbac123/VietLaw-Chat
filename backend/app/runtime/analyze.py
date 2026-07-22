@@ -9,24 +9,23 @@ to map; never returns the error schema itself.
 import uuid
 from typing import Optional
 
-from app import (
-    citation_guard, content_templates as ct, decision_policy, legal_triage,
-    risk_classifier, safety_guard,
-)
-from app.chat_store import ChatStore
+from app.guards import citation_guard, safety_guard
+from app.llm import content_templates as ct
+from app.triage import decision_policy, legal_triage, risk_classifier
+from app.stores.chat_store import ChatStore
 from app.config import Settings
-from app.context_builder import build_context
+from app.services.context_builder import build_context
 from app.errors import InvalidRequest
-from app.input_normalizer import normalize
-from app.language_detector import is_vietnamese
-from app.llm_client import LLMClient
-from app.output_parser import parse_content_or_fallback
-from app.patterns import PatternBank
-from app.prompt_builder import build_prompt
-from app.rag_retriever import RetrievalResult, Retriever, load_snippets
-from app.response_builder import build as build_response
+from app.nlp.input_normalizer import normalize
+from app.nlp.language_detector import is_vietnamese
+from app.llm.llm_client import LLMClient
+from app.llm.output_parser import parse_content_or_fallback
+from app.nlp.patterns import PatternBank
+from app.llm.prompt_builder import build_prompt
+from app.rag.rag_retriever import RetrievalResult, Retriever, load_snippets
+from app.services.response_builder import build as build_response
 from app.schemas import AnalyzeRequest, AnalyzeResponse, Decision, Domain, RiskLevel
-from app.unsafe_intent_detector import detect
+from app.triage.unsafe_intent_detector import detect
 
 _GUIDANCE = {Decision.answer_with_guidance, Decision.ask_clarifying_questions}
 _EMPTY_RETRIEVAL = RetrievalResult(retrieval_strategy="none")

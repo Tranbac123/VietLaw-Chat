@@ -7,11 +7,11 @@ signals always beat the topical domain.
 from dataclasses import dataclass
 from typing import Optional
 
-from app.input_normalizer import NormalizedText
-from app.keywords import has_legal_signal, match_domain
-from app.patterns import PatternBank, PatternGroup
+from app.nlp.input_normalizer import NormalizedText
+from app.nlp.keywords import has_legal_signal, match_domain
+from app.nlp.patterns import PatternBank, PatternGroup
 from app.schemas import Domain
-from app.unsafe_intent_detector import UnsafeResult, topic_short
+from app.triage.unsafe_intent_detector import UnsafeResult, topic_short
 
 
 @dataclass

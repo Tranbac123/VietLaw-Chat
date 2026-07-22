@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from app.input_normalizer import normalize
-from app.language_detector import is_vietnamese
-from app.patterns import PatternBank
+from app.nlp.input_normalizer import normalize
+from app.nlp.language_detector import is_vietnamese
+from app.nlp.patterns import PatternBank
 
 _DATA = Path(__file__).resolve().parents[2] / "data" / "unsafe_patterns.json"
 

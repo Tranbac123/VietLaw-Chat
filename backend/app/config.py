@@ -3,7 +3,13 @@
 Env vars are provider-neutral (see .env.example). `resolved_provider` maps the
 neutral config to a concrete LLM provider: anthropic or openai-compatible.
 """
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Anchor default data paths to the repo root (backend/app/config.py -> repo).
+# Keeps the server and tests independent of the current working directory.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # backend owns this exact text.
 # The LLM must never generate or modify it.
@@ -33,10 +39,10 @@ class Settings(BaseSettings):
     llm_timeout: float = 30.0
     llm_max_retries: int = 1
 
-    # Data paths
-    chat_db_path: str = "./data/vietlaw_chat.sqlite3"
-    legal_snippets_path: str = "./data/legal_snippets.json"
-    unsafe_patterns_path: str = "./data/unsafe_patterns.json"
+    # Data paths (default to repo-root data/; override via env with any path)
+    chat_db_path: str = str(_REPO_ROOT / "data" / "vietlaw_chat.sqlite3")
+    legal_snippets_path: str = str(_REPO_ROOT / "data" / "legal_snippets.json")
+    unsafe_patterns_path: str = str(_REPO_ROOT / "data" / "unsafe_patterns.json")
 
     # RAG / context thresholds
     min_content_score: int = 2

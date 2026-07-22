@@ -1,8 +1,8 @@
 """Prompt builder."""
-from app.prompt_builder import build_prompt
-from app.rag_retriever import Retriever, load_snippets
+from app.llm.prompt_builder import build_prompt
+from app.rag.rag_retriever import Retriever, load_snippets
 from app.schemas import Decision, Domain, RiskLevel
-from app.input_normalizer import normalize
+from app.nlp.input_normalizer import normalize
 from pathlib import Path
 
 _PACK = Path(__file__).resolve().parents[2] / "data" / "legal_snippets.json"

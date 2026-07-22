@@ -7,7 +7,7 @@ of MVP — context_terms is what RAG actually needs for follow-up continuity.
 """
 from dataclasses import dataclass, field
 
-from app.chat_store import ChatStore
+from app.stores.chat_store import ChatStore
 
 
 @dataclass

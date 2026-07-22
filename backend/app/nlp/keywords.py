@@ -7,7 +7,7 @@ Single-syllable ambiguous tokens are avoided — folding "nợ"→"no" would fal
 """
 from typing import Optional
 
-from app.input_normalizer import strip_accents
+from app.nlp.input_normalizer import strip_accents
 
 _RAW = {
     "civil_dispute": [

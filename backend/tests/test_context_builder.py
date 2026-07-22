@@ -1,8 +1,8 @@
 """Context builder. Same-chat only, follow-up support."""
 import pytest
 
-from app.chat_store import ChatStore
-from app.context_builder import build_context
+from app.stores.chat_store import ChatStore
+from app.services.context_builder import build_context
 
 
 @pytest.fixture

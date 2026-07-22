@@ -6,8 +6,8 @@ phrase must not suppress detection. Runs per-turn, independent of chat history.
 """
 from dataclasses import dataclass, field
 
-from app.keywords import match_domain
-from app.patterns import PatternBank
+from app.nlp.keywords import match_domain
+from app.nlp.patterns import PatternBank
 
 
 @dataclass

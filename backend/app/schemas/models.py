@@ -207,3 +207,34 @@ class ChatListResponse(BaseModel):
     contract_version: Literal["v1"] = "v1"
     session_id: str
     chats: list[ChatListItem] = Field(default_factory=list)
+
+
+class ChatCreateRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+    title: Optional[str] = Field(default=None, max_length=160)
+
+
+class ChatCreateResponse(BaseModel):
+    contract_version: Literal["v1"] = "v1"
+    chat_id: str
+    session_id: str
+    title: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class DeleteChatResponse(BaseModel):
+    contract_version: Literal["v1"] = "v1"
+    chat_id: str
+    deleted: bool
+
+
+# ---------------------------------------------------------------- health
+
+class HealthResponse(BaseModel):
+    status: Literal["ok", "degraded"]
+    service: str
+    contract_version: Literal["v1"] = "v1"
+    rag_loaded: bool
+    safety_loaded: bool
+    chat_store_ready: bool

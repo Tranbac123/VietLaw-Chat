@@ -3,11 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from app import decision_policy, legal_triage, risk_classifier
-from app.patterns import PatternBank
-from app.input_normalizer import normalize
+from app.triage import decision_policy, legal_triage, risk_classifier
+from app.nlp.patterns import PatternBank
+from app.nlp.input_normalizer import normalize
 from app.schemas import Decision, Domain, RiskLevel
-from app.unsafe_intent_detector import detect
+from app.triage.unsafe_intent_detector import detect
 
 _DATA = Path(__file__).resolve().parents[2] / "data" / "unsafe_patterns.json"
 

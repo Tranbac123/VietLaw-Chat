@@ -8,8 +8,8 @@ and flag it (metadata.llm_parse_error → success 200 upstream, not an error).
 import json
 import re
 
-from app.content_templates import fallback_content
-from app.patterns import PatternBank
+from app.llm.content_templates import fallback_content
+from app.nlp.patterns import PatternBank
 from app.schemas import Domain, LLMContent
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)

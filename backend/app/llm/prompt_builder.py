@@ -4,7 +4,7 @@ Assembles a grounded, content-only prompt. The LLM may output ONLY the 5 content
 fields and may reference sources solely via used_source_ids from allowed ids. It is
 explicitly told NOT to emit backend-owned fields (domain/risk/decision/sources/etc).
 """
-from app.rag_retriever import RetrievedSource
+from app.rag.rag_retriever import RetrievedSource
 from app.schemas import Decision, Domain, RiskLevel
 
 _SYSTEM = (

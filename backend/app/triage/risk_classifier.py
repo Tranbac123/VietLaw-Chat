@@ -7,11 +7,11 @@ says medium, scoring would say low); data + golden win.
 """
 from dataclasses import dataclass
 
-from app.input_normalizer import NormalizedText
-from app.legal_triage import DomainResult
-from app.patterns import PatternBank
+from app.nlp.input_normalizer import NormalizedText
+from app.triage.legal_triage import DomainResult
+from app.nlp.patterns import PatternBank
 from app.schemas import Domain, RiskLevel
-from app.unsafe_intent_detector import UnsafeResult
+from app.triage.unsafe_intent_detector import UnsafeResult
 
 _FALLBACK_RISK = {
     Domain.civil_dispute: RiskLevel.medium,

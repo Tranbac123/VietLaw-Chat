@@ -1,5 +1,5 @@
 """Citation guard."""
-from app.citation_guard import apply
+from app.guards.citation_guard import apply
 from app.schemas import LLMContent
 
 

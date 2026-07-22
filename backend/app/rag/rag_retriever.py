@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Union
 
 from app.errors import RetrievalError
-from app.input_normalizer import NormalizedText, strip_accents
+from app.nlp.input_normalizer import NormalizedText, strip_accents
 from app.schemas import Decision, Domain
 
 RETRIEVAL_STRATEGY = "in_memory_keyword_v1"

@@ -8,9 +8,9 @@ guarantee-like can reach the user.
 """
 from dataclasses import dataclass, field
 
-from app import content_templates as ct
-from app.input_normalizer import strip_accents
-from app.patterns import PatternBank
+from app.llm import content_templates as ct
+from app.nlp.input_normalizer import strip_accents
+from app.nlp.patterns import PatternBank
 from app.schemas import Decision, Domain, LLMContent, RiskLevel
 
 # Illegal/tactical forbidden phrases → refuse. Everything else forbidden → over-claim.

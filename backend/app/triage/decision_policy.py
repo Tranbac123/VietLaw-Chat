@@ -4,10 +4,10 @@ Risk and decision are separate axes. Unsafe intent routes to refuse/escalate;
 high_risk domain escalates; unknown is unsupported; otherwise the matched group's
 expected_decision applies, defaulting to asking for missing facts.
 """
-from app.legal_triage import DomainResult
-from app.risk_classifier import RiskResult
+from app.triage.legal_triage import DomainResult
+from app.triage.risk_classifier import RiskResult
 from app.schemas import Decision, Domain
-from app.unsafe_intent_detector import UnsafeResult
+from app.triage.unsafe_intent_detector import UnsafeResult
 
 
 def decide(dom: DomainResult, risk: RiskResult, unsafe: UnsafeResult) -> Decision:
