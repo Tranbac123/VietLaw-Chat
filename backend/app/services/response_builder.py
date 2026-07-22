@@ -7,8 +7,8 @@ Pydantic. It never retrieves, classifies, calls the LLM, or makes safety decisio
 from typing import Optional
 
 from app.config import SAFETY_NOTICE, Settings
-from app.context_builder import Context
-from app.rag_retriever import RetrievalResult, RetrievedSource
+from app.services.context_builder import Context
+from app.rag.rag_retriever import RetrievalResult, RetrievedSource
 from app.schemas import (
     AnalyzeResponse, Confidence, Decision, Domain, GuardsApplied, LLMContent,
     Metadata, RiskLevel, Source,

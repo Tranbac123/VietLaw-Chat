@@ -5,7 +5,7 @@ Refusal, escalation, unsupported, and fallback content is templated here so unsa
 and high-risk responses are never LLM-authored (no tactical text can leak), and so
 a failed LLM call still returns cautious, safe content.
 """
-from app.patterns import PatternBank
+from app.nlp.patterns import PatternBank
 from app.schemas import Decision, Domain, LLMContent
 
 _CLARIFYING = {

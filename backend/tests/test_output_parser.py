@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from app.output_parser import parse_content_or_fallback
-from app.patterns import PatternBank
+from app.llm.output_parser import parse_content_or_fallback
+from app.nlp.patterns import PatternBank
 from app.schemas import Domain
 
 _DATA = Path(__file__).resolve().parents[2] / "data" / "unsafe_patterns.json"

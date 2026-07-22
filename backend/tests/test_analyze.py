@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from app.analyze import AiCore
-from app.chat_store import ChatStore
+from app.runtime.analyze import AiCore
+from app.stores.chat_store import ChatStore
 from app.config import Settings
 from app.errors import ChatNotFound, InvalidRequest, LlmError
-from app.patterns import PatternBank
-from app.rag_retriever import Retriever, load_snippets
+from app.nlp.patterns import PatternBank
+from app.rag.rag_retriever import Retriever, load_snippets
 from app.schemas import AnalyzeRequest, Decision, Domain, RiskLevel
 
 _ROOT = Path(__file__).resolve().parents[2] / "data"
@@ -29,7 +29,7 @@ def _core(tmp_path, llm_text='{"summary":"Tóm tắt vụ việc.","clarifying_q
     settings = Settings(_env_file=None, chat_db_path=str(tmp_path / "c.sqlite3"))
     if isinstance(llm_text, Exception):
         # Real client wraps transport failures into LlmError after retry.
-        from app.llm_client import LLMClient
+        from app.llm.llm_client import LLMClient
 
         def boom(_prompt):
             raise llm_text

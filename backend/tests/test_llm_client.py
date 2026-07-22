@@ -3,7 +3,7 @@ import pytest
 
 from app.config import Settings
 from app.errors import LlmError
-from app.llm_client import LLMClient
+from app.llm.llm_client import LLMClient
 
 
 def _client(transport):

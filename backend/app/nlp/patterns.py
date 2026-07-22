@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from app.errors import RetrievalError
-from app.input_normalizer import strip_accents
+from app.nlp.input_normalizer import strip_accents
 
 
 def _fold(s: str) -> str:

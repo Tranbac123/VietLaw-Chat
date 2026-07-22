@@ -5,9 +5,9 @@ Vietnamese (with or without diacritics) is supported; clearly non-Vietnamese is
 detector would misflag no-diacritics Vietnamese and short legal phrases. When
 uncertain, treat as Vietnamese (false-rejecting VN hurts demo trust more).
 """
-from app.input_normalizer import NormalizedText
-from app.keywords import DOMAIN_KEYWORDS
-from app.patterns import PatternBank
+from app.nlp.input_normalizer import NormalizedText
+from app.nlp.keywords import DOMAIN_KEYWORDS
+from app.nlp.patterns import PatternBank
 
 # Distinctive Vietnamese tokens, accent-folded, curated to avoid English collisions
 # (no "the"/"can"/"an"/"a"/"in"/"do"). Exact-token match, so no substring false hits.

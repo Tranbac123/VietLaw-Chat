@@ -720,7 +720,7 @@ def test_complete_success_payload_identity_mismatch_fails_without_mutation(tmp_p
 def test_failed_retryable_lifecycle_corruption_fails_without_mutation(
     tmp_path: Path, field: str, value: object
 ) -> None:
-    path = tmp_path / f"retry-{field}-{str(value)[-1]}.sqlite3"
+    path = tmp_path / f"retry-{field}.sqlite3"
     store, command = _durable_state(path, "retry")
     request, _, _ = _lifecycle_snapshot(path, command.request_id)
     _corrupt_request(path, command.request_id, **{field: value(request)})  # type: ignore[operator]
@@ -749,7 +749,7 @@ def test_failed_retryable_lifecycle_corruption_fails_without_mutation(
 def test_failed_final_lifecycle_corruption_fails_without_mutation(
     tmp_path: Path, field: str, value: object
 ) -> None:
-    path = tmp_path / f"final-{field}-{str(value)[-1]}.sqlite3"
+    path = tmp_path / f"final-{field}.sqlite3"
     store, command = _durable_state(path, "final")
     request, _, _ = _lifecycle_snapshot(path, command.request_id)
     _corrupt_request(path, command.request_id, **{field: value(request)})  # type: ignore[operator]

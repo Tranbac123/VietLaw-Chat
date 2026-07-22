@@ -4,10 +4,10 @@ from pathlib import Path
 import pytest
 
 from app.config import SAFETY_NOTICE, Settings
-from app.context_builder import Context
-from app.rag_retriever import Retriever, load_snippets
-from app.input_normalizer import normalize
-from app.response_builder import build
+from app.services.context_builder import Context
+from app.rag.rag_retriever import Retriever, load_snippets
+from app.nlp.input_normalizer import normalize
+from app.services.response_builder import build
 from app.schemas import AnalyzeResponse, Decision, Domain, LLMContent, RiskLevel
 
 _PACK = Path(__file__).resolve().parents[2] / "data" / "legal_snippets.json"

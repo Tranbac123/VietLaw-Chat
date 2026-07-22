@@ -1,5 +1,5 @@
 """Input normalizer."""
-from app.input_normalizer import normalize
+from app.nlp.input_normalizer import normalize
 
 
 def test_preserves_original():

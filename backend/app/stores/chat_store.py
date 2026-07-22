@@ -8,6 +8,7 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from app.errors import ChatNotFound, InvalidRequest
@@ -47,10 +48,19 @@ def _now() -> str:
 
 class ChatStore:
     def __init__(self, db_path: str):
+        if db_path != ":memory:":
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+
+    def healthcheck(self) -> bool:
+        try:
+            self._conn.execute("SELECT 1")
+            return True
+        except sqlite3.Error:
+            return False
 
     # ------------------------------------------------------------- chats
 

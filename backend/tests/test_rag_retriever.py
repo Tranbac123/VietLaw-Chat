@@ -4,8 +4,8 @@ from pathlib import Path
 import pytest
 
 from app.errors import RetrievalError
-from app.input_normalizer import normalize
-from app.rag_retriever import Retriever, load_snippets
+from app.nlp.input_normalizer import normalize
+from app.rag.rag_retriever import Retriever, load_snippets
 from app.schemas import Decision, Domain
 
 _PACK = Path(__file__).resolve().parents[2] / "data" / "legal_snippets.json"
