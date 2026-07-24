@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from time import perf_counter
+from typing import TYPE_CHECKING
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from ..services.demo_llm_generation import DemoOrchestrator
 
 from ..constants import CONTRACT_VERSION
 from ..errors import ChatNotFoundError, InvalidRequestError
@@ -46,6 +50,7 @@ class AgentRuntime:
         safety_guard: SafetyGuard,
         response_builder: ResponseBuilder,
         title_service: TitleService,
+        demo_orchestrator: "DemoOrchestrator | None" = None,
     ) -> None:
         self.chat_store = chat_store
         self.context_builder = context_builder
@@ -61,6 +66,7 @@ class AgentRuntime:
         self.safety_guard = safety_guard
         self.response_builder = response_builder
         self.title_service = title_service
+        self.demo_orchestrator = demo_orchestrator
 
     @contextmanager
     def _phase(self, state: AgentState, name: str):
@@ -151,6 +157,50 @@ class AgentRuntime:
                 state.classification.safety_flags = detection.safety_flags
                 if detection.expected_decision:
                     state.classification.decision = detection.expected_decision
+
+        # DEMO VERTICAL SLICE V1 hook. Only active when a demo orchestrator was wired
+        # (feature flag on); otherwise this block is skipped entirely and the baseline
+        # runtime below is unchanged. Safety turns are never handled here -- the
+        # orchestrator returns None for them, deferring to the baseline pipeline.
+        if self.demo_orchestrator is not None:
+            demo_response = None
+            try:
+                with self._phase(state, "demo_vertical_slice"):
+                    demo_response = await self.demo_orchestrator.handle(state)
+            except Exception:  # noqa: BLE001 - contain demo failure; defer to baseline, no 500, no raw leak
+                state.trace.warnings.append("demo_vertical_slice_deferred")
+                demo_response = None
+            if demo_response is not None:
+                state.final_response = demo_response
+                with self._phase(state, "validate_final_response"):
+                    state.final_response = AnalyzeResponse.model_validate(
+                        state.final_response.model_dump(mode="json")
+                    )
+                with self._phase(state, "store_assistant_message"):
+                    content = AnalyzeContent.model_validate(
+                        state.final_response.model_dump(
+                            mode="json",
+                            include={
+                                "response_kind", "domain", "risk_level", "decision", "summary",
+                                "clarifying_questions", "checklist", "next_steps", "sources",
+                                "safety_notice", "confidence", "metadata",
+                            },
+                        )
+                    )
+                    self.chat_store.add_message(
+                        ChatMessage(
+                            message_id=state.persistence.assistant_message_id,
+                            chat_id=state.chat.chat_id,
+                            role="assistant",
+                            content_type="structured",
+                            content_text=None,
+                            content_json=content,
+                            created_at=utc_now(),
+                        )
+                    )
+                    state.persistence.assistant_message_stored = True
+                with self._phase(state, "return_response"):
+                    return state.final_response
 
         with self._phase(state, "classify_domain"):
             domain, topic = self.domain_classifier.classify(state)
