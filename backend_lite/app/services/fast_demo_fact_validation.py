@@ -193,19 +193,44 @@ _POSITIVE_RE = re.compile(
 # untouched. An allowlist is deliberately used in preference to a denylist of
 # ambiguous phrases -- "chu nha chua phan hoi, cung khong noi ro ly do" carries
 # a genuine no-response cue and must still be accepted.
+#
+# Every cue below must describe COMMUNICATION status and nothing else. Cues
+# about receiving money or property are specifically excluded: "chua nhan lai
+# tien coc" and "chu nha nhan tien coc" say nothing about whether the landlord
+# replied, so a bare `nhan`/`nhan lai` must never appear here.
+_COMMUNICATION_NOUNS = r"(?:phan\s+hoi|tra\s+loi|hoi\s+am|hoi\s+dap)"
+
 _NO_RESPONSE_RE = re.compile(
-    r"\b(?:chua|khong)\s+(?:he\s+)?"
-    r"(?:phan\s+hoi|tra\s+loi|hoi\s+am|hoi\s+dap|noi\s+gi|lien\s+lac\s+lai|nhan\s+lai)\b"
-    r"|\b(?:chua|khong)\s+nhan\s+duoc\s+(?:phan\s+hoi|hoi\s+am|tra\s+loi)\b"
-    r"|\bkhong\s+lien\s+lac\s+duoc\b"
-    r"|\bim\s+lang\b|\bbo\s+mac\b|\bmat\s+lien\s+lac\b|\bbiet\s+mat\b|\btron\s+tranh\b"
+    # "chua/khong (he) (co) phan hoi|tra loi|hoi am|hoi dap"
+    rf"\b(?:chua|khong)\s+(?:he\s+)?(?:co\s+)?{_COMMUNICATION_NOUNS}\b"
+    rf"|\b(?:chua|khong)\s+nhan\s+duoc\s+{_COMMUNICATION_NOUNS}\b"
+    r"|\bkhong\s+lien\s+lac\s+duoc\b|\b(?:chua|khong)\s+lien\s+lac\s+lai\b"
+    r"|\bim\s+lang\b|\bmat\s+lien\s+lac\b"
 )
 
+# Speech verbs only, and only with `chu nha` immediately before them, so a
+# negated form ("chu nha khong noi ro ly do") cannot match by adjacency.
 _RESPONDED_RE = re.compile(
-    r"\b(?:da|co)\s+(?:phan\s+hoi|tra\s+loi|hoi\s+am|hoi\s+dap)\b"
-    r"|\b(?:da|co)\s+nhan\s+duoc\s+(?:phan\s+hoi|hoi\s+am|tra\s+loi)\b"
-    r"|\bchu\s+nha\s+(?:noi|bao|keu|hua|nhan|tra\s+loi|phan\s+hoi|giai\s+thich|khang\s+dinh)\b"
+    rf"\b(?:da|co)\s+{_COMMUNICATION_NOUNS}\b"
+    rf"|\b(?:da|co)\s+nhan\s+duoc\s+{_COMMUNICATION_NOUNS}\b"
+    r"|\bchu\s+nha\s+(?:noi|bao|hua|tra\s+loi|phan\s+hoi|hoi\s+am|giai\s+thich|khang\s+dinh)\b"
 )
+
+# A positive cue sitting inside a negation is not a response. "chua co phan
+# hoi" contains the literal "co phan hoi"; without this guard it would resolve
+# `present` -- the exact inverse of what the user said.
+_NEGATOR_RE = re.compile(r"\b(?:khong|chua|chang|chan)\b")
+_NEGATION_LOOKBEHIND = 16
+
+
+def _has_unnegated_response_cue(normalized: str) -> bool:
+    """True only for a response cue that is not preceded by a negator."""
+
+    for match in _RESPONDED_RE.finditer(normalized):
+        prefix = normalized[max(0, match.start() - _NEGATION_LOOKBEHIND): match.start()]
+        if not _NEGATOR_RE.search(prefix):
+            return True
+    return False
 
 
 def infer_response_status(span_text: str) -> str | None:
@@ -219,7 +244,7 @@ def infer_response_status(span_text: str) -> str | None:
 
     normalized = _strip_accents(span_text)
     says_no_response = _NO_RESPONSE_RE.search(normalized) is not None
-    says_responded = _RESPONDED_RE.search(normalized) is not None
+    says_responded = _has_unnegated_response_cue(normalized)
     if says_no_response and says_responded:
         # Both readings present in one span -> genuinely ambiguous.
         return None
