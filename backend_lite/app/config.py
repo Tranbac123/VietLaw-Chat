@@ -5,12 +5,14 @@ from pathlib import Path
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .env_loader import load_local_env
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
     app_env: str = "development"
     log_level: str = "info"
@@ -21,6 +23,10 @@ class Settings(BaseSettings):
     cors_origins: str = "http://127.0.0.1:5173,http://localhost:5173"
     rag_top_k: int = 3
     context_message_limit: int = 8
+
+    def __init__(self, **values: object) -> None:
+        load_local_env()
+        super().__init__(**values)
 
     @field_validator("chat_db_path", "legal_snippets_path", "unsafe_patterns_path", mode="before")
     @classmethod

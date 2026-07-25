@@ -23,6 +23,7 @@ from typing import Protocol
 import httpx
 
 from ..contracts.demo_llm import DEMO_RESPONSE_PLAN_JSON_SCHEMA, LLMErrorKind
+from ..env_loader import load_local_env
 
 _ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -57,6 +58,8 @@ class DemoLLMConfig:
 
     @classmethod
     def from_env(cls, env: dict[str, str] | None = None) -> "DemoLLMConfig":
+        if env is None:
+            load_local_env()
         source = env if env is not None else os.environ
         return cls(
             enabled=_flag(source.get("VIETLAW_LLM_ENABLED")),
