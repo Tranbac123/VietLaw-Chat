@@ -167,7 +167,10 @@ def _to_number(raw: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 _NEGATIVE_RE = re.compile(
-    r"\b(?:khong|chua|chang|chan)\s+(?:co|ky|nhan|tra|hoan|duoc|giao|lam|gui|phan\s+hoi|noi)\b"
+    # Negators only: khong, chua, chang (<- "chang"). "chan" is NOT one -- it is
+    # the stripped form of "chan" ("bored"), so "toi chan ky giay to" ("I am fed
+    # up with signing paperwork") would read as "did not sign".
+    r"\b(?:khong|chua|chang)\s+(?:co|ky|nhan|tra|hoan|duoc|giao|lam|gui|phan\s+hoi|noi)\b"
     r"|\b(?:khong|chua)\s+(?:duoc\s+)?(?:ban\s+giao|tra\s+lai|hoan\s+tra|hoan\s+lai)\b"
     r"|\bchua\b(?=[^.]{0,20}\b(?:tra|hoan|nhan|ky|giao|co)\b)"
     r"|\bkhong\s+co\b|\bchua\s+co\b"
