@@ -587,3 +587,53 @@ def test_orchestrator_exception_defers_to_baseline_without_500(tmp_path: Path) -
     assert response.status_code == 200
     assert "boom" not in response.text
     assert "Traceback" not in response.text
+
+
+def test_same_chat_rejects_fake_response_facts_then_accepts_explicit_chang_negation(tmp_path: Path) -> None:
+    first_plan = TURN2_PLAN
+    fake_response_plan = plan(
+        response_mode="draft",
+        draft={"title": "Tin nhắn", "body": "Đề nghị hoàn trả tiền cọc 20.000.000 đồng."},
+        fact_updates=[
+            {"operation": "set", "slot": "landlord_response_status", "value": "present",
+             "evidence_quote": "không nói rõ lý do"},
+            {"operation": "set", "slot": "landlord_refusal_reason", "value": "not_stated",
+             "evidence_quote": "không nói rõ lý do"},
+        ],
+    )
+    explicit_absent_plan = plan(
+        response_mode="acknowledge",
+        fact_updates=[
+            {"operation": "negate", "slot": "landlord_response_status", "value": None,
+             "evidence_quote": "Chủ nhà chẳng có phản hồi"},
+        ],
+    )
+    app, fake, store = build(tmp_path, [first_plan, fake_response_plan, explicit_absent_plan])
+
+    with TestClient(app) as client:
+        first = ask(
+            client,
+            "Tôi đã đặt cọc thuê nhà 20 triệu và có sao kê chuyển khoản.",
+            crid="chang-1",
+        )
+        chat_id = first["chat_id"]
+        second = ask(
+            client,
+            "Chủ nhà không nói rõ lý do. Viết giúp tôi tin nhắn yêu cầu hoàn trả.",
+            chat_id=chat_id,
+            crid="chang-2",
+        )
+        state_after_second = store.load(chat_id)
+        assert fake.calls == 2
+        assert second["draft"] is not None
+        assert state_after_second.state.facts.deposit_amount.value == 20_000_000
+        assert state_after_second.state.facts.payment_evidence_status == "present"
+        assert state_after_second.state.facts.landlord_response_status == "unknown"
+        assert state_after_second.state.facts.landlord_refusal_reason is None
+        assert not any("phản hồi" in fact.lower() for fact in second["known_facts"])
+
+        ask(client, "Chủ nhà chẳng có phản hồi.", chat_id=chat_id, crid="chang-3")
+        state_after_third = store.load(chat_id)
+        assert fake.calls == 3
+        assert state_after_third.state.facts.landlord_response_status == "absent"
+        assert state_after_third.state_version == state_after_second.state_version + 1
