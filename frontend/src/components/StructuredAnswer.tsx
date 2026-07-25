@@ -8,7 +8,6 @@ import {
 import { formatDomain } from '../lib/format';
 import { DecisionBadge } from './DecisionBadge';
 import { RiskBadge } from './RiskBadge';
-import { SafetyNotice } from './SafetyNotice';
 import { SourcePanel } from './SourcePanel';
 
 interface StructuredAnswerProps {
@@ -81,6 +80,24 @@ function AnswerList({ title, items, visibleCount, animateItems }: AnswerListProp
   );
 }
 
+function ClarifyingQuestions({ items, visibleCount, animateItems }: Omit<AnswerListProps, 'title'>) {
+  const visibleItems = items.slice(0, visibleCount);
+  if (visibleItems.length === 0) return null;
+
+  return (
+    <section className="answer-section clarification-section">
+      <p className="clarification-lead">Để tôi đánh giá chính xác hơn, bạn có thể cho biết thêm:</p>
+      <ul>
+        {visibleItems.map((item, index) => (
+          <li className={animateItems ? 'answer-list-item--revealed' : undefined} key={`clarification-${index}`}>
+            {item}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export function StructuredAnswer({
   content,
   animate = false,
@@ -91,6 +108,19 @@ export function StructuredAnswer({
   const typewriterTiming = useMemo(
     () => getAdaptiveTypewriterTiming(summaryGraphemes.length),
     [summaryGraphemes.length],
+  );
+  const isFollowUp = content.metadata.used_current_chat_history === true;
+  const visibleChecklist = useMemo(
+    () => (isFollowUp || content.decision === 'unsupported' ? [] : content.checklist),
+    [content.checklist, content.decision, isFollowUp],
+  );
+  const visibleSources = useMemo(
+    () => (isFollowUp ? [] : content.sources.filter((source) => (
+      source.source_type !== 'curated_note'
+      && source.source_type !== 'safety_policy'
+      && source.source_type !== 'demo_only'
+    ))),
+    [content.sources, isFollowUp],
   );
   const reducedMotion = prefersReducedMotion();
   const [revealState, setRevealState] = useState(() => (
@@ -153,14 +183,14 @@ export function StructuredAnswer({
       if (cancelled || didComplete) return;
 
       const revealSteps: Array<() => void> = [
-        ...content.clarifying_questions.map((_, index) => () => {
-          setRevealState((current) => ({ ...current, clarifyingCount: index + 1 }));
-        }),
-        ...content.checklist.map((_, index) => () => {
+        ...visibleChecklist.map((_, index) => () => {
           setRevealState((current) => ({ ...current, checklistCount: index + 1 }));
         }),
         ...content.next_steps.map((_, index) => () => {
           setRevealState((current) => ({ ...current, nextStepsCount: index + 1 }));
+        }),
+        ...content.clarifying_questions.map((_, index) => () => {
+          setRevealState((current) => ({ ...current, clarifyingCount: index + 1 }));
         }),
       ];
 
@@ -225,15 +255,46 @@ export function StructuredAnswer({
       cancelScheduledWork();
       if (completeNowRef.current) completeNowRef.current = null;
     };
-  }, [animate, content, summaryGraphemes.length, typewriterTiming.charsPerSecond]);
+  }, [animate, content, summaryGraphemes.length, typewriterTiming.charsPerSecond, visibleChecklist]);
 
   const visibleSummary = summaryGraphemes.slice(0, revealState.summaryLength).join('');
   const animateItems = isRevealing && !prefersReducedMotion();
 
+  // Social turns (greeting/identity/capability) are a direct conversational reply, not
+  // a legal analysis: no domain/risk/decision badges, no clarification/checklist/next-step
+  // sections, no source panel, no legal safety disclaimer -- just the assistant text with
+  // the same reveal animation as a normal message. Anything that is not literally
+  // response_kind === 'social' (including older persisted messages without the field)
+  // falls through to the existing full legal rendering below.
+  if (content.response_kind === 'social') {
+    return (
+      <div className="structured-answer structured-answer--social">
+        {isRevealing && (
+          <button
+            className="answer-reveal-skip"
+            type="button"
+            onClick={() => completeNowRef.current?.()}
+            aria-label="Hiển thị toàn bộ phản hồi ngay"
+          >
+            Hiện ngay
+          </button>
+        )}
+        <p className="message-text">
+          {visibleSummary}
+          {isRevealing && revealState.summaryLength < summaryGraphemes.length && (
+            <span className="typewriter-cursor" aria-hidden="true">▍</span>
+          )}
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="structured-answer">
       <div className="answer-badges" aria-label="Phân loại phản hồi">
-        <span className={`badge domain-badge domain-${content.domain}`}>{formatDomain(content.domain)}</span>
+        {content.domain !== 'high_risk' && (
+          <span className={`badge domain-badge domain-${content.domain}`}>{formatDomain(content.domain)}</span>
+        )}
         <RiskBadge level={content.risk_level} />
         <DecisionBadge decision={content.decision} />
       </div>
@@ -249,36 +310,31 @@ export function StructuredAnswer({
         </button>
       )}
 
-      <section className="answer-summary">
-        <h2>Tóm tắt ban đầu</h2>
-        <p>
-          {visibleSummary}
-          {isRevealing && revealState.summaryLength < summaryGraphemes.length && (
-            <span className="typewriter-cursor" aria-hidden="true">▍</span>
-          )}
-        </p>
-      </section>
+      <p className="answer-summary">
+        {visibleSummary}
+        {isRevealing && revealState.summaryLength < summaryGraphemes.length && (
+          <span className="typewriter-cursor" aria-hidden="true">▍</span>
+        )}
+      </p>
 
       <AnswerList
-        title="Câu hỏi cần làm rõ"
-        items={content.clarifying_questions}
-        visibleCount={revealState.clarifyingCount}
-        animateItems={animateItems}
-      />
-      <AnswerList
-        title="Checklist giấy tờ"
-        items={content.checklist}
+        title="Bạn nên chuẩn bị"
+        items={visibleChecklist}
         visibleCount={revealState.checklistCount}
         animateItems={animateItems}
       />
       <AnswerList
-        title="Bước tiếp theo an toàn"
+        title="Bạn có thể làm ngay"
         items={content.next_steps}
         visibleCount={revealState.nextStepsCount}
         animateItems={animateItems}
       />
-      {revealState.showSources && <SourcePanel sources={content.sources} />}
-      {revealState.showSafetyNotice && <SafetyNotice notice={content.safety_notice} />}
+      <ClarifyingQuestions
+        items={content.clarifying_questions}
+        visibleCount={revealState.clarifyingCount}
+        animateItems={animateItems}
+      />
+      {revealState.showSources && visibleSources.length > 0 && <SourcePanel sources={visibleSources} />}
     </div>
   );
 }

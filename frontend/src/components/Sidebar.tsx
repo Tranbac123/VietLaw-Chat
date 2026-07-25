@@ -1,4 +1,5 @@
 import type { ChatListItem } from '../api/types';
+import vietLawLogo from '../assets/brand/vietlaw-logo.png';
 import { ConversationList } from './ConversationList';
 
 interface SidebarProps {
@@ -13,10 +14,9 @@ export function Sidebar({ chats, activeChatId, loading, onNewChat, onSelectChat 
   return (
     <aside className="sidebar" aria-label="Lịch sử chat">
       <div className="sidebar-brand">
-        <span className="brand-symbol" aria-hidden="true">V</span>
+        <img src={vietLawLogo} alt="" aria-hidden="true" className="brand-logo" draggable={false} />
         <div>
           <p className="brand-name">VietLaw-Chat</p>
-          <p className="brand-caption">MVP Demo</p>
         </div>
       </div>
 

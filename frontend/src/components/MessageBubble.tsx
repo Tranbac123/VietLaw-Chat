@@ -18,12 +18,11 @@ export function MessageBubble({
   const isUser = message.role === 'user';
 
   return (
-    <article className={`message-bubble ${isUser ? 'message-user' : 'message-assistant'}`}>
-      <div className="message-meta">
-        <span>{isUser ? 'Bạn' : 'Trợ lý'}</span>
-        <time dateTime={message.created_at}>{formatDate(message.created_at)}</time>
-      </div>
-
+    <article
+      className={`message-bubble ${isUser ? 'message-user' : 'message-assistant'}`}
+      aria-label={isUser ? 'Tin nhắn của bạn' : 'Phản hồi từ VietLaw-Chat'}
+      title={isUser ? undefined : formatDate(message.created_at)}
+    >
       {message.content_type === 'structured' && message.content_json ? (
         <StructuredAnswer
           content={message.content_json}

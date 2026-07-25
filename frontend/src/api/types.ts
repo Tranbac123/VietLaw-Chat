@@ -49,39 +49,68 @@ export interface AnalyzeRequest {
   language?: 'vi';
 }
 
-export interface AnalyzeResponse {
+export type ResponseKind = 'legal' | 'social';
+
+interface AnalyzeResponseCommon {
   contract_version: string;
   request_id: string;
   chat_id: string;
   user_message_id: string;
   assistant_message_id: string;
-  domain: Domain;
-  risk_level: RiskLevel;
-  decision: Decision;
   summary: string;
   clarifying_questions: string[];
   checklist: string[];
   next_steps: string[];
   sources: SourceObject[];
   safety_notice: string;
-  confidence: Confidence;
   metadata: Record<string, unknown>;
 }
 
-export type AnalyzeContent = Pick<
-  AnalyzeResponse,
-  | 'domain'
-  | 'risk_level'
-  | 'decision'
-  | 'summary'
-  | 'clarifying_questions'
-  | 'checklist'
-  | 'next_steps'
-  | 'sources'
-  | 'safety_notice'
-  | 'confidence'
-  | 'metadata'
->;
+export interface LegalAnalyzeResponse extends AnalyzeResponseCommon {
+  response_kind: 'legal';
+  domain: Domain;
+  risk_level: RiskLevel;
+  decision: Decision;
+  confidence: Confidence;
+}
+
+export interface SocialAnalyzeResponse extends AnalyzeResponseCommon {
+  response_kind: 'social';
+  domain: null;
+  risk_level: null;
+  decision: null;
+  confidence: null;
+}
+
+export type AnalyzeResponse = LegalAnalyzeResponse | SocialAnalyzeResponse;
+
+interface AnalyzeContentCommon {
+  summary: string;
+  clarifying_questions: string[];
+  checklist: string[];
+  next_steps: string[];
+  sources: SourceObject[];
+  safety_notice: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface LegalAnalyzeContent extends AnalyzeContentCommon {
+  response_kind: 'legal';
+  domain: Domain;
+  risk_level: RiskLevel;
+  decision: Decision;
+  confidence: Confidence;
+}
+
+export interface SocialAnalyzeContent extends AnalyzeContentCommon {
+  response_kind: 'social';
+  domain: null;
+  risk_level: null;
+  decision: null;
+  confidence: null;
+}
+
+export type AnalyzeContent = LegalAnalyzeContent | SocialAnalyzeContent;
 
 export type MessageRole = 'user' | 'assistant';
 export type ContentType = 'text' | 'structured';

@@ -33,7 +33,24 @@ function waitForMinimumThinkingDuration(remainingMs: number, cancellation: Promi
 }
 
 function pickAnalyzeContent(response: AnalyzeResponse): AnalyzeContent {
+  if (response.response_kind === 'social') {
+    return {
+      response_kind: 'social',
+      domain: null,
+      risk_level: null,
+      decision: null,
+      summary: response.summary,
+      clarifying_questions: response.clarifying_questions,
+      checklist: response.checklist,
+      next_steps: response.next_steps,
+      sources: response.sources,
+      safety_notice: response.safety_notice,
+      confidence: null,
+      metadata: response.metadata,
+    };
+  }
   return {
+    response_kind: 'legal',
     domain: response.domain,
     risk_level: response.risk_level,
     decision: response.decision,
@@ -251,6 +268,7 @@ export function App() {
   const isEmptyChat = messages.length === 0;
   const hasStartedConversation = !isEmptyChat || assistantResponsePhase !== 'idle';
   const showLanding = !hasStartedConversation;
+  const hasAssistantMessage = messages.some((message) => message.role === 'assistant');
 
   return (
     <ChatLayout
@@ -268,6 +286,11 @@ export function App() {
         />
       )}
     >
+      {!hasAssistantMessage && (
+        <p className="chat-level-notice" role="note">
+          VietLaw-Chat cung cấp định hướng ban đầu và không thay thế tư vấn pháp lý chuyên nghiệp.
+        </p>
+      )}
       <ChatWindow
         messages={messages}
         assistantResponsePhase={assistantResponsePhase}
