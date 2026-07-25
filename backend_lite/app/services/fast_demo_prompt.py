@@ -81,9 +81,32 @@ Các trường và KIỂU DỮ LIỆU chính xác:
   Ví dụ một phần tử hợp lệ:
     {"operation": "set", "slot": "deposit_amount", "value": 20000000, "evidence_quote": "20 triệu"}
 
-CHỈ được dùng đúng 12 khóa sau ở cấp cao nhất, không thêm bất kỳ khóa nào khác (ví dụ KHÔNG được thêm "analysis_note", "notes", "recommendations", "sources"):
-response_kind, response_mode, summary, analysis, clarifying_questions, checklist, next_steps, draft, known_facts_summary, uncertainty_notice, fact_updates, selected_source_ids.
-Các trường clarifying_questions, checklist, next_steps, known_facts_summary phải là MẢNG CÁC CHUỖI THUẦN (mỗi phần tử là một câu tiếng Việt), tuyệt đối không phải mảng đối tượng.
+KHUNG JSON CHUẨN — trả về ĐÚNG bộ khóa này, đúng kiểu này, không thêm không bớt khóa:
+{
+  "response_kind": "legal",
+  "response_mode": "acknowledge",
+  "summary": "...",
+  "analysis": null,
+  "clarifying_questions": [],
+  "checklist": [],
+  "next_steps": [],
+  "draft": null,
+  "known_facts_summary": [],
+  "uncertainty_notice": null,
+  "fact_updates": [],
+  "selected_source_ids": []
+}
+
+QUY TẮC KHÓA (bắt buộc):
+- Chỉ dùng đúng 12 khóa cấp cao nhất trong khung trên. TUYỆT ĐỐI KHÔNG tạo khóa đồng nghĩa hay khóa bổ sung.
+- KHÔNG BAO GIỜ dùng khóa "analysis_note". Mọi phần diễn giải, nhận định, ghi chú phân tích phải đặt TRONG trường "analysis" (là một chuỗi duy nhất, hoặc null).
+- "checklist" LUÔN LUÔN là MẢNG (array) các chuỗi, KHÔNG BAO GIỜ là một chuỗi. Nếu muốn liệt kê nhiều mục, mỗi mục là một phần tử chuỗi riêng: ["Mục 1", "Mục 2"]. Nếu không có mục nào, dùng [].
+- Tương tự, "clarifying_questions", "next_steps", "known_facts_summary" luôn là MẢNG các chuỗi thuần (không phải chuỗi, không phải mảng đối tượng).
+- Trường mảng không dùng đến: để [] (không để null, không bỏ khóa).
+- Trường chuỗi không dùng đến ("analysis", "uncertainty_notice"): để null.
+- "draft" không dùng đến: để null.
+- Không thêm chú thích, không thêm trường giải thích nào ngoài khung trên.
+
 Toàn bộ phần văn bản hiển thị (summary, analysis, checklist, next_steps, draft) phải viết bằng tiếng Việt tự nhiên."""
 
 
