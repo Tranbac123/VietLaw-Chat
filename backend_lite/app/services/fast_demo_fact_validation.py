@@ -181,6 +181,55 @@ _POSITIVE_RE = re.compile(
 )
 
 
+# `landlord_response_status` answers exactly one question: did the landlord
+# respond at all? The generic polarity regexes above are slot-agnostic -- they
+# list `noi` among the negatable verbs, so "khong noi ro ly do" ("did not give
+# a clear reason") reads as a generic negation and would flip this slot to
+# "absent". A missing reason is not a missing response, so this slot resolves
+# from its own explicit cue sets instead of generic polarity.
+#
+# These are allowlists, not a Vietnamese negation grammar: evidence that does
+# not state a response status either way is rejected, leaving the slot
+# untouched. An allowlist is deliberately used in preference to a denylist of
+# ambiguous phrases -- "chu nha chua phan hoi, cung khong noi ro ly do" carries
+# a genuine no-response cue and must still be accepted.
+_NO_RESPONSE_RE = re.compile(
+    r"\b(?:chua|khong)\s+(?:he\s+)?"
+    r"(?:phan\s+hoi|tra\s+loi|hoi\s+am|hoi\s+dap|noi\s+gi|lien\s+lac\s+lai|nhan\s+lai)\b"
+    r"|\b(?:chua|khong)\s+nhan\s+duoc\s+(?:phan\s+hoi|hoi\s+am|tra\s+loi)\b"
+    r"|\bkhong\s+lien\s+lac\s+duoc\b"
+    r"|\bim\s+lang\b|\bbo\s+mac\b|\bmat\s+lien\s+lac\b|\bbiet\s+mat\b|\btron\s+tranh\b"
+)
+
+_RESPONDED_RE = re.compile(
+    r"\b(?:da|co)\s+(?:phan\s+hoi|tra\s+loi|hoi\s+am|hoi\s+dap)\b"
+    r"|\b(?:da|co)\s+nhan\s+duoc\s+(?:phan\s+hoi|hoi\s+am|tra\s+loi)\b"
+    r"|\bchu\s+nha\s+(?:noi|bao|keu|hua|nhan|tra\s+loi|phan\s+hoi|giai\s+thich|khang\s+dinh)\b"
+)
+
+
+def infer_response_status(span_text: str) -> str | None:
+    """Resolve `landlord_response_status` from explicit cues only.
+
+    Returns 'absent' or 'present' only when the verified span itself states
+    whether the landlord responded. Anything else -- including evidence that
+    only says the *reason* was unclear -- returns None so the slot is left
+    unchanged rather than inferred from an unrelated absence.
+    """
+
+    normalized = _strip_accents(span_text)
+    says_no_response = _NO_RESPONSE_RE.search(normalized) is not None
+    says_responded = _RESPONDED_RE.search(normalized) is not None
+    if says_no_response and says_responded:
+        # Both readings present in one span -> genuinely ambiguous.
+        return None
+    if says_no_response:
+        return "absent"
+    if says_responded:
+        return "present"
+    return None
+
+
 def infer_polarity(span_text: str, message: str) -> str | None:
     """Return 'absent', 'present', or None when polarity is not clear enough.
 
@@ -377,6 +426,23 @@ def _resolve_value(
             # Multiple matches producing different values -> reject.
             return None
         return candidates[0]
+
+    if slot == "landlord_response_status":
+        # Scoped ahead of the generic tri-state path: this slot must never be
+        # derived from generic negation, and must never fall back to the
+        # model's stated operation. A model that asserts operation="negate"
+        # while quoting "khong noi ro ly do" is exactly the inference being
+        # prevented, so unexplicit evidence rejects and the slot stays as it is.
+        statuses: list[tuple[str, VerifiedSpan]] = []
+        for span in spans:
+            status = infer_response_status(span.original_quote)
+            if status is not None:
+                statuses.append((status, span))
+        if not statuses:
+            return None
+        if len({status for status, _ in statuses}) != 1:
+            return None
+        return statuses[0]
 
     if slot in TRI_STATE_SLOTS:
         polarities: list[tuple[str, VerifiedSpan]] = []

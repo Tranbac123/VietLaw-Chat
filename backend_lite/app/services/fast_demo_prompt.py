@@ -35,7 +35,11 @@ QUY TẮC DỮ KIỆN:
 - Chỉ dùng các slot trong danh sách cho phép.
 - present = người dùng xác nhận CÓ; absent = người dùng xác nhận KHÔNG/CHƯA; nếu chỉ nhắc đến mà không xác nhận thì ĐỪNG đề xuất cập nhật.
 - TUYỆT ĐỐI KHÔNG dùng các chuỗi placeholder nội bộ làm giá trị dữ kiện. Không bao giờ đặt "not_stated", "unknown", "unspecified", "not_provided", "none", "null", "N/A" hay các mã tương tự vào trường "value".
-- Nếu chủ nhà KHÔNG nêu lý do, ĐỪNG bịa ra một lý do và cũng ĐỪNG ghi một mã placeholder vào landlord_refusal_reason. Hãy bỏ qua slot đó (không đề xuất cập nhật), và nếu phù hợp thì phản ánh việc chủ nhà chưa phản hồi qua slot tri-state landlord_response_status.
+- Nếu chủ nhà KHÔNG nêu lý do, ĐỪNG bịa ra một lý do và cũng ĐỪNG ghi một mã placeholder vào landlord_refusal_reason. Hãy bỏ qua slot đó (không đề xuất cập nhật).
+- landlord_response_status và landlord_refusal_reason là HAI dữ kiện TÁCH BIỆT. landlord_response_status chỉ trả lời một câu hỏi duy nhất: chủ nhà CÓ phản hồi hay KHÔNG.
+- Chỉ đặt landlord_response_status = "absent" khi người dùng nói RÕ rằng chủ nhà không/chưa phản hồi (ví dụ: "chủ nhà chưa phản hồi", "chủ nhà không trả lời", "chưa nhận được phản hồi", "chủ nhà im lặng").
+- "chủ nhà không nói rõ lý do", "không nêu lý do", "lý do không rõ" KHÔNG phải bằng chứng cho việc chủ nhà không phản hồi — đó là một phản hồi thiếu lý do. Trong trường hợp này ĐỪNG đề xuất cập nhật landlord_response_status.
+- KHÔNG suy ra một trường chỉ vì thiếu thông tin ở một trường khác.
 - Chỉ đề xuất giá trị là nội dung THẬT mà người dùng đã nói, kèm evidence_quote trích nguyên văn từ tin nhắn hiện tại.
 
 QUY TẮC PHÁP LÝ:
