@@ -119,6 +119,33 @@ _AMOUNT_RE = re.compile(
 )
 
 
+# Accent stripping collapses two different words onto the token `chang`:
+#   "chẳng" ("not at all")        -> real negation
+#   "chăng" ("perhaps/is it so?") -> interrogative particle, NOT negation
+# So a normalized `chang` may not be trusted as a negator on its own. Worse,
+# simply dropping it would expose the positive cue inside the question:
+# "Phải chăng đã ký hợp đồng?" would resolve `present` off "đã ký".
+#
+# Provenance is therefore decided on the ORIGINAL, still-accented evidence,
+# before `_strip_accents` runs. Only "chẳng" is trusted as a negator; "chăng"
+# and a bare unaccented "chang" (whose origin is unrecoverable) both block
+# inference entirely, in either direction.
+#
+# This is a bounded disambiguation of one normalization collision, not a
+# general Vietnamese question classifier.
+_AMBIGUOUS_CHANG_RE = re.compile(r"\b(?:chăng|chang)\b")
+
+
+def _has_ambiguous_chang(text: str) -> bool:
+    """True when ``text`` carries a `chang` whose meaning cannot be trusted.
+
+    Matches the interrogative "chang" and the accent-stripped "chang", but not
+    the negation "chang", which stays available as a negator.
+    """
+
+    return _AMBIGUOUS_CHANG_RE.search(unicodedata.normalize("NFC", text).casefold()) is not None
+
+
 def _strip_accents(text: str) -> str:
     decomposed = unicodedata.normalize("NFD", text.lower())
     stripped = "".join(ch for ch in decomposed if unicodedata.category(ch) != "Mn")
@@ -204,9 +231,12 @@ _POSITIVE_RE = re.compile(
 _COMMUNICATION_NOUNS = r"(?:phan\s+hoi|tra\s+loi|hoi\s+am|hoi\s+dap)"
 
 _NO_RESPONSE_RE = re.compile(
-    # "chua/khong (he) (co) phan hoi|tra loi|hoi am|hoi dap"
-    rf"\b(?:chua|khong)\s+(?:he\s+)?(?:co\s+)?{_COMMUNICATION_NOUNS}\b"
-    rf"|\b(?:chua|khong)\s+nhan\s+duoc\s+{_COMMUNICATION_NOUNS}\b"
+    # "chua/khong/chang (he) (co) phan hoi|tra loi|hoi am|hoi dap".
+    # `chang` is admissible here only because `_has_ambiguous_chang` has already
+    # rejected the interrogative and unaccented forms upstream, so a `chang`
+    # reaching this pattern provably came from the negation "chẳng".
+    rf"\b(?:chua|khong|chang)\s+(?:he\s+)?(?:co\s+)?{_COMMUNICATION_NOUNS}\b"
+    rf"|\b(?:chua|khong|chang)\s+nhan\s+duoc\s+{_COMMUNICATION_NOUNS}\b"
     r"|\bkhong\s+lien\s+lac\s+duoc\b|\b(?:chua|khong)\s+lien\s+lac\s+lai\b"
     r"|\bim\s+lang\b|\bmat\s+lien\s+lac\b"
 )
@@ -249,6 +279,12 @@ def infer_response_status(span_text: str) -> str | None:
     unchanged rather than inferred from an unrelated absence.
     """
 
+    # Same provenance check as generic polarity, on the original span: an
+    # interrogative "chăng" (or an unaccented "chang") settles nothing about
+    # whether the landlord made contact, in either direction.
+    if _has_ambiguous_chang(span_text):
+        return None
+
     normalized = _strip_accents(span_text)
     says_no_response = _NO_RESPONSE_RE.search(normalized) is not None
     says_responded = _has_unnegated_response_cue(normalized)
@@ -270,6 +306,12 @@ def infer_polarity(span_text: str, message: str) -> str | None:
     fact.
     """
 
+    # Decided on the original text, before accents are lost. Blocks BOTH
+    # directions: an interrogative "chăng" must not yield `absent` via the
+    # negation pattern, nor `present` via a positive cue left inside it.
+    if _has_ambiguous_chang(span_text):
+        return None
+
     normalized_span = _strip_accents(span_text)
     if _NEGATIVE_RE.search(normalized_span):
         return "absent"
@@ -282,7 +324,17 @@ def infer_polarity(span_text: str, message: str) -> str | None:
     if normalized_target:
         position = normalized_message.find(normalized_target)
         if position != -1:
-            window = normalized_message[max(0, position - 24): position + len(normalized_target)]
+            start = max(0, position - 24)
+            end = position + len(normalized_target)
+            # `_strip_accents` maps characters 1:1, so the same offsets address
+            # the original text; fall back to the whole message if that ever
+            # stops holding, which errs toward blocking rather than inferring.
+            original_window = (
+                message[start:end] if len(normalized_message) == len(message) else message
+            )
+            if _has_ambiguous_chang(original_window):
+                return None
+            window = normalized_message[start:end]
             if _NEGATIVE_RE.search(window):
                 return "absent"
             if _POSITIVE_RE.search(window):
