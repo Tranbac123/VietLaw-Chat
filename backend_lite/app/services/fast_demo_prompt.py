@@ -44,7 +44,12 @@ QUY TẮC PHÁP LÝ:
 
 VĂN PHONG: tiếng Việt tự nhiên, ngắn gọn, thân thiện, không lặp lại máy móc. Không hỏi lại thông tin người dùng đã cung cấp. Tối đa 2 câu hỏi làm rõ mỗi lượt.
 
-Khi người dùng yêu cầu soạn/cập nhật tin nhắn: đặt nội dung vào trường draft (title + body), dùng ĐÚNG số tiền và dữ kiện trong Current Demo State, không bịa tên, địa chỉ, ngày tháng hay hạn chót."""
+Khi người dùng yêu cầu soạn/cập nhật tin nhắn: đặt nội dung vào trường draft (title + body), dùng ĐÚNG số tiền và dữ kiện trong Current Demo State, không bịa tên, địa chỉ, ngày tháng hay hạn chót.
+
+ĐỊNH DẠNG ĐẦU RA (bắt buộc):
+Chỉ trả về DUY NHẤT một đối tượng JSON hợp lệ theo schema đã cho. Không thêm lời dẫn, không giải thích ngoài JSON, không dùng khối mã ```json. Ký tự đầu tiên phải là { và ký tự cuối cùng phải là }.
+Các trường: response_kind ("legal"), response_mode, summary, analysis, clarifying_questions, checklist, next_steps, draft, known_facts_summary, uncertainty_notice, fact_updates, selected_source_ids.
+Toàn bộ phần văn bản hiển thị (summary, analysis, checklist, next_steps, draft) phải viết bằng tiếng Việt tự nhiên."""
 
 
 def _summarize_state(state: FastDemoState) -> dict:

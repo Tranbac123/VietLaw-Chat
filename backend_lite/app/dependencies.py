@@ -62,6 +62,40 @@ def _int_env(name: str, default: int) -> int:
     return value if value > 0 else default
 
 
+# Claude models that support native Structured Outputs (`output_config.format`).
+# Sending that parameter to a model outside this set is rejected by the API, which
+# surfaces as an immediate 4xx and drops the turn to the deterministic fallback.
+# Matched on prefix so dated snapshots of the same family are covered.
+_STRUCTURED_OUTPUT_MODELS: tuple[str, ...] = (
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-5",
+    "claude-opus-4-1",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+)
+
+
+def _structured_output_supported(model: str | None) -> bool:
+    """Whether to send `output_config.format` for this model.
+
+    ``VIETLAW_FAST_DEMO_STRUCTURED_OUTPUT`` overrides the detection either way
+    (``1``/``0``), so a newly-supported model can be opted in without a code change.
+    When structured output is off, conformance is still enforced locally by the
+    ``FastDemoPlan`` Pydantic validator -- the schema itself is never weakened.
+    """
+
+    override = (os.environ.get("VIETLAW_FAST_DEMO_STRUCTURED_OUTPUT") or "").strip().lower()
+    if override in {"1", "true", "yes", "on"}:
+        return True
+    if override in {"0", "false", "no", "off"}:
+        return False
+    name = (model or "").strip().lower()
+    return any(name.startswith(prefix) for prefix in _STRUCTURED_OUTPUT_MODELS)
+
+
 def _build_fast_demo_orchestrator(settings: Settings, snippet_store: JsonSnippetStore):
     """Construct the FAST DEMO V2 orchestrator only when its flag is enabled.
 
@@ -90,6 +124,7 @@ def _build_fast_demo_orchestrator(settings: Settings, snippet_store: JsonSnippet
             timeout_s=_float_env("VIETLAW_FAST_DEMO_TIMEOUT_S", 30.0),
             max_output_tokens=_int_env("VIETLAW_FAST_DEMO_MAX_TOKENS", 2048),
             temperature=0.0,
+            use_structured_output=_structured_output_supported(llm_config.model),
         )
         store = FastDemoStateStore(settings.chat_db_path)
         store.ensure_schema()

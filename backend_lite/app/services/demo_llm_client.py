@@ -102,6 +102,7 @@ class LLMClientProtocol(Protocol):
         timeout_s: float,
         json_schema: dict | None = None,
         temperature: float | None = None,
+        use_structured_output: bool = True,
     ) -> str:
         """Return the raw model text for one prompt, or raise LLMClientError.
 
@@ -126,24 +127,28 @@ class AnthropicLLMClient:
         timeout_s: float,
         json_schema: dict | None = None,
         temperature: float | None = None,
+        use_structured_output: bool = True,
     ) -> str:
         readiness = self._config.readiness_error()
         if readiness is not None:
             raise LLMClientError(readiness, "provider not ready")
         # json_schema/temperature are FAST DEMO V2 additions. When omitted the
         # payload is byte-identical to the original demo request.
-        output_config = (
-            {"format": {"type": "json_schema", "schema": json_schema}}
-            if json_schema is not None
-            else STRUCTURED_OUTPUT_CONFIG
-        )
         payload = {
             "model": self._config.model,
             "max_tokens": max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user}],
-            "output_config": output_config,
         }
+        # Native structured outputs are not available on every Claude model. When
+        # unsupported, omit output_config entirely rather than sending a parameter
+        # the model rejects; the caller still validates the returned JSON locally.
+        if use_structured_output:
+            payload["output_config"] = (
+                {"format": {"type": "json_schema", "schema": json_schema}}
+                if json_schema is not None
+                else STRUCTURED_OUTPUT_CONFIG
+            )
         if temperature is not None:
             payload["temperature"] = temperature
         headers = {
@@ -214,6 +219,7 @@ class FakeLLMClient:
         self.last_user: str | None = None
         self.last_json_schema: dict | None = None
         self.last_temperature: float | None = None
+        self.last_use_structured_output: bool | None = None
 
     async def complete(
         self,
@@ -224,8 +230,10 @@ class FakeLLMClient:
         timeout_s: float,
         json_schema: dict | None = None,
         temperature: float | None = None,
+        use_structured_output: bool = True,
     ) -> str:
         self.calls += 1
+        self.last_use_structured_output = use_structured_output
         self.last_system = system
         self.last_user = user
         self.last_json_schema = json_schema

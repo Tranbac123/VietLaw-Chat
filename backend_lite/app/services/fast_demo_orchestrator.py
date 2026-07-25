@@ -21,6 +21,7 @@ Two properties are enforced structurally rather than by convention:
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from ..constants import CONTRACT_VERSION, SAFETY_NOTICE
@@ -51,11 +52,13 @@ from .fast_demo_routing import (
 )
 from .fast_demo_source_pack import FastDemoSourcePack
 
+_logger = logging.getLogger("vietlaw.fast_demo")
+
 DISCLAIMER_NOTICE = SAFETY_NOTICE
 
 _FALLBACK_SUMMARY = (
-    "Xin lỗi, tôi chưa tạo được phản hồi chi tiết cho lượt này. Thông tin bạn đã cung cấp "
-    "vẫn được giữ nguyên."
+    "Hiện tôi chưa thể tạo phân tích chi tiết cho lượt này. Tôi vẫn giữ lại các thông tin "
+    "bạn đã cung cấp để bạn không phải nhập lại."
 )
 _FALLBACK_STEPS = [
     "Giữ lại toàn bộ chứng từ chuyển khoản và tin nhắn trao đổi với chủ nhà.",
@@ -79,6 +82,7 @@ class FastDemoConfig:
         timeout_s: float,
         max_output_tokens: int,
         temperature: float,
+        use_structured_output: bool = True,
     ) -> None:
         self.enabled = enabled
         self.model = model
@@ -86,6 +90,11 @@ class FastDemoConfig:
         self.timeout_s = timeout_s
         self.max_output_tokens = max_output_tokens
         self.temperature = temperature
+        # Native structured outputs are not supported on every Claude model. When
+        # the pinned model lacks them, the request must omit output_config and rely
+        # on the prompt's JSON-only instruction plus local Pydantic validation --
+        # validation strength is unchanged, only where conformance is enforced.
+        self.use_structured_output = use_structured_output
 
     @property
     def provider_ready(self) -> bool:
@@ -105,6 +114,7 @@ class FastDemoOrchestrator:
         self._pack = source_pack
         self._client = llm_client
         self._config = config
+        self._last_failure: str | None = None
 
     # -- entry point ---------------------------------------------------------
 
@@ -112,6 +122,7 @@ class FastDemoOrchestrator:
         """Own the turn, or return None to defer to the baseline pipeline."""
 
         provider_calls = 0
+        self._last_failure = None
         chat_id = state.chat.chat_id
         message = state.request.question
         client_request_id = getattr(state.request, "client_request_id", None) or ""
@@ -156,7 +167,9 @@ class FastDemoOrchestrator:
 
         if plan is None:
             candidate_state = loaded.state.model_copy(deep=True)
-            response = self._fallback_response(state, candidate_state, reason="plan_unavailable")
+            response = self._fallback_response(
+                state, candidate_state, reason=self._last_failure or "provider_not_configured"
+            )
         else:
             candidate_state, response = self._build_success(state, loaded, plan, pack, message)
 
@@ -204,22 +217,53 @@ class FastDemoOrchestrator:
                 timeout_s=self._config.timeout_s,
                 json_schema=FAST_DEMO_PLAN_JSON_SCHEMA,
                 temperature=self._config.temperature,
+                use_structured_output=self._config.use_structured_output,
             )
-        except LLMClientError:
+        except LLMClientError as exc:
+            # exc.detail is bounded and constructed by our own client (e.g.
+            # "status 400"); it never carries credentials or user content.
+            self._note_failure(f"provider_error:{exc.kind.value}", exc.detail)
             return None
-        except Exception:  # noqa: BLE001 - contained; CancelledError is BaseException
+        except Exception as exc:  # noqa: BLE001 - contained; CancelledError is BaseException
+            self._note_failure(f"client_exception:{type(exc).__name__}", "")
             return None
 
         try:
             payload = json.loads(raw)
         except (TypeError, ValueError):
+            self._note_failure("provider_invalid_json", "")
             return None
         if not isinstance(payload, dict):
+            self._note_failure("provider_invalid_json", "top-level not an object")
             return None
         try:
             return FastDemoPlan.model_validate(payload)
-        except Exception:  # noqa: BLE001 - schema failure -> deterministic fallback
+        except Exception as exc:  # noqa: BLE001 - schema failure -> deterministic fallback
+            # Only the failing field names are recorded — never field values,
+            # which would echo user content back into the log.
+            fields = ""
+            errors = getattr(exc, "errors", None)
+            if callable(errors):
+                try:
+                    fields = ",".join(
+                        ".".join(str(p) for p in e.get("loc", ())) for e in errors()[:5]
+                    )
+                except Exception:  # noqa: BLE001
+                    fields = ""
+            self._note_failure("local_schema_validation_failure", fields[:120])
             return None
+
+    def _note_failure(self, category: str, detail: str) -> None:
+        """Record one bounded, credential-free reason for this turn's fallback.
+
+        Logged server-side and surfaced in response metadata as a category only.
+        Never contains the API key, headers, prompts, or user conversation text.
+        """
+
+        self._last_failure = category
+        _logger.warning(
+            "fast_demo provider turn failed: category=%s detail=%s", category, detail[:120]
+        )
 
     # -- response construction ----------------------------------------------
 
@@ -321,7 +365,7 @@ class FastDemoOrchestrator:
             draft=None,
             known_facts=known,
             uncertainty_notice=(
-                "Đây là phản hồi dự phòng nên chưa có phân tích chi tiết cho lượt này."
+                "Bạn có thể nhắn lại để tôi phân tích kỹ hơn tình huống của bạn."
             ),
             metadata=_metadata(route="legal_conversation", mode="fallback", extra={"reason": reason}),
         )

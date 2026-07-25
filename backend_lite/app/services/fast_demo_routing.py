@@ -54,21 +54,30 @@ _SOCIAL_RE = re.compile(
     + _TAIL + r"$"
 )
 
+# Optional object/qualifier between the verb and the interrogative, e.g.
+# "giúp TÔI VIỆC gì", "giúp ĐƯỢC NHỮNG gì cho tôi". Kept as one shared fragment so
+# every capability phrasing accepts the same set rather than each listing its own.
+_CAP_OBJ = r"(?:\s+(?:toi|minh|duoc|nhung|viec|gi\s+viec))*"
+_CAP_TAIL_OBJ = r"(?:\s+(?:cho\s+toi|cho\s+minh|khong|a|the\s+nao))?"
+_CAP_ACTOR = r"(?:ban|may|bot|ai|em|cau)"
+_CAP_VERB = r"(?:lam|giup|ho\s+tro|tro\s+giup|assist)"
+
 _CAPABILITY_RE = re.compile(
     r"^(?:"
-    # "bạn làm được gì", "bạn giúp được gì", "bạn hỗ trợ được gì"
-    r"(?:ban|may|bot|ai)\s+(?:lam|giup|ho\s+tro)\s+duoc\s+(?:nhung\s+)?gi(?:\s+cho\s+toi)?"
+    # "bạn làm được gì" / "bạn giúp tôi được gì" / "bạn giúp tôi việc gì" /
+    # "bạn hỗ trợ được những gì cho tôi" — object may sit before OR after the verb.
+    rf"{_CAP_ACTOR}\s+{_CAP_VERB}{_CAP_OBJ}\s+gi{_CAP_TAIL_OBJ}"
     # "bạn làm gì được"
-    r"|(?:ban|may|bot|ai)\s+lam\s+gi\s+duoc"
-    # "bạn có thể làm/giúp/hỗ trợ gì"
-    r"|(?:ban|may|bot|ai)\s+co\s+the\s+(?:lam|giup|ho\s+tro)\s+(?:duoc\s+)?(?:nhung\s+)?gi(?:\s+cho\s+toi)?"
+    rf"|{_CAP_ACTOR}\s+{_CAP_VERB}\s+gi\s+duoc"
+    # "bạn có thể giúp tôi việc gì" / "bạn có thể làm gì" / "bạn có thể hỗ trợ gì"
+    rf"|{_CAP_ACTOR}\s+co\s+the\s+{_CAP_VERB}{_CAP_OBJ}\s+gi{_CAP_TAIL_OBJ}"
+    # "tôi có thể hỏi bạn gì" / "tôi hỏi bạn được gì" / "mình có thể nhờ bạn việc gì"
+    rf"|(?:toi|minh)\s+(?:co\s+the\s+)?(?:hoi|nho|yeu\s+cau)\s+{_CAP_ACTOR}{_CAP_OBJ}\s+gi{_CAP_TAIL_OBJ}"
     # identity, folded into capability for the demo
-    r"|(?:ban|may)\s+la\s+ai"
-    r"|(?:ban|may)\s+ten\s+(?:la\s+)?gi"
-    r"|ten\s+(?:ban|may)\s+(?:la\s+)?gi"
+    rf"|{_CAP_ACTOR}\s+la\s+ai"
+    rf"|{_CAP_ACTOR}\s+ten\s+(?:la\s+)?gi"
+    rf"|ten\s+{_CAP_ACTOR}\s+(?:la\s+)?gi"
     r"|who\s+are\s+you|what\s+are\s+you|what\s+can\s+you\s+do|help"
-    # "bạn giúp được gì cho tôi", "bạn hỗ trợ gì"
-    r"|(?:ban|may|bot|ai)\s+(?:giup|ho\s+tro)\s+(?:duoc\s+)?gi"
     r")"
     + _TAIL + r"$"
 )
@@ -179,22 +188,27 @@ def classify_route(text: str, *, has_active_matter: bool) -> FastDemoRoute:
     return FastDemoRoute.SCOPE_OR_UNSUPPORTED
 
 
+# User-facing copy. Deliberately free of implementation vocabulary — no "bản demo",
+# "phản hồi dự phòng", provider/route/scope/schema/state. The assistant speaks as an
+# assistant, never about its own plumbing.
+
 GREETING_TEXT = (
-    "Xin chào! Tôi có thể giúp bạn phân tích tình huống tiền cọc thuê nhà, "
-    "xác định thông tin còn thiếu, chuẩn bị chứng cứ, đề xuất bước tiếp theo "
-    "và soạn tin nhắn yêu cầu hoàn cọc."
+    "Xin chào! Tôi có thể giúp bạn xử lý tình huống tiền cọc thuê nhà: phân tích sự việc, "
+    "xác định thông tin còn thiếu, chuẩn bị chứng cứ, gợi ý bước tiếp theo và soạn tin nhắn "
+    "yêu cầu hoàn cọc. Bạn kể giúp tôi tình huống của bạn nhé."
 )
 
 CAPABILITY_TEXT = (
-    "Tôi có thể giúp bạn phân tích tranh chấp tiền cọc thuê nhà, xác định thông tin "
-    "còn thiếu, chuẩn bị danh sách chứng cứ, đề xuất bước xử lý và soạn tin nhắn "
-    "yêu cầu hoàn trả. Bản demo hiện tập trung vào tình huống tiền cọc thuê nhà."
+    "Tôi có thể giúp bạn phân tích tình huống tiền cọc thuê nhà, xác định thông tin còn "
+    "thiếu, chuẩn bị chứng cứ, đề xuất bước tiếp theo và soạn tin nhắn yêu cầu hoàn trả.\n\n"
+    "Bạn chỉ cần cho tôi biết số tiền đã đặt cọc, giấy tờ hoặc chứng từ đang có, và chủ nhà "
+    "đã phản hồi thế nào."
 )
 
 SCOPE_TEXT = (
-    "Bản demo này hiện chỉ hỗ trợ tình huống tiền cọc thuê nhà. Bạn mô tả giúp tôi "
-    "tình huống đặt cọc của mình (số tiền, giấy tờ hiện có, chủ nhà đã phản hồi thế nào) "
-    "để tôi hỗ trợ cụ thể hơn nhé."
+    "Tôi tập trung hỗ trợ các tình huống liên quan đến tiền cọc thuê nhà. Bạn mô tả giúp tôi "
+    "sự việc của mình — số tiền đã đặt cọc, giấy tờ hoặc chứng từ đang có, và chủ nhà đã phản "
+    "hồi thế nào — để tôi hỗ trợ cụ thể hơn nhé."
 )
 
 UNSAFE_TEXT = (
