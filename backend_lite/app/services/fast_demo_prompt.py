@@ -34,6 +34,9 @@ QUY TẮC DỮ KIỆN:
 - Mỗi fact_update phải có evidence_quote TRÍCH NGUYÊN VĂN từ Tin nhắn hiện tại của người dùng (không trích từ lịch sử, không tự viết lại).
 - Chỉ dùng các slot trong danh sách cho phép.
 - present = người dùng xác nhận CÓ; absent = người dùng xác nhận KHÔNG/CHƯA; nếu chỉ nhắc đến mà không xác nhận thì ĐỪNG đề xuất cập nhật.
+- TUYỆT ĐỐI KHÔNG dùng các chuỗi placeholder nội bộ làm giá trị dữ kiện. Không bao giờ đặt "not_stated", "unknown", "unspecified", "not_provided", "none", "null", "N/A" hay các mã tương tự vào trường "value".
+- Nếu chủ nhà KHÔNG nêu lý do, ĐỪNG bịa ra một lý do và cũng ĐỪNG ghi một mã placeholder vào landlord_refusal_reason. Hãy bỏ qua slot đó (không đề xuất cập nhật), và nếu phù hợp thì phản ánh việc chủ nhà chưa phản hồi qua slot tri-state landlord_response_status.
+- Chỉ đề xuất giá trị là nội dung THẬT mà người dùng đã nói, kèm evidence_quote trích nguyên văn từ tin nhắn hiện tại.
 
 QUY TẮC PHÁP LÝ:
 - Chỉ nêu nhận định pháp lý được hỗ trợ bởi các nguồn được cung cấp và trong phạm vi approved_claim_scope của nguồn đó.

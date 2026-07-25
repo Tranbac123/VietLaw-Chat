@@ -39,7 +39,7 @@ from ..stores.fast_demo_state_store import (
     LoadedFastDemoState,
 )
 from .demo_llm_client import LLMClientError, LLMClientProtocol
-from .fast_demo_fact_validation import apply_fact_updates
+from .fast_demo_fact_validation import apply_fact_updates, is_reserved_sentinel
 from .fast_demo_prompt import SYSTEM_PROMPT, build_user_prompt
 from .fast_demo_routing import (
     CAPABILITY_TEXT,
@@ -619,7 +619,9 @@ def _known_facts(state: FastDemoState) -> list[str]:
         }
         names = [readable.get(item, item) for item in facts.payment_evidence_types]
         lines.append("Chứng cứ thanh toán: " + ", ".join(names))
-    if facts.landlord_refusal_reason:
+    # Defense in depth only -- acceptance already refuses sentinels, but a row
+    # persisted before that guard existed must still never reach the user.
+    if facts.landlord_refusal_reason and not is_reserved_sentinel(facts.landlord_refusal_reason):
         lines.append(f"Lý do chủ nhà đưa ra: {facts.landlord_refusal_reason}")
     return lines
 

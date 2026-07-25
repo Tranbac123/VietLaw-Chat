@@ -209,6 +209,55 @@ def infer_polarity(span_text: str, message: str) -> str | None:
     return None
 
 
+# Reserved machine tokens a model may emit to mean "no value here". They are
+# internal placeholders, never something a user or landlord actually said, so
+# they must not be persisted as a free-text fact. Deliberately ASCII
+# machine-token shapes only: this is not a Vietnamese natural-language denylist,
+# and a real reason such as "nhà chưa sửa xong" is unaffected.
+RESERVED_SENTINEL_VALUES: frozenset[str] = frozenset(
+    {
+        "not_stated",
+        "not_specified",
+        "not_provided",
+        "not_given",
+        "not_available",
+        "not_applicable",
+        "unspecified",
+        "unknown",
+        "undefined",
+        "unavailable",
+        "none",
+        "null",
+        "nil",
+        "n_a",
+        "na",
+        "empty",
+        "no_reason",
+        "no_reason_given",
+        "no_value",
+        "todo",
+        "tbd",
+        "placeholder",
+    }
+)
+
+
+def is_reserved_sentinel(value: str) -> bool:
+    """True when ``value`` is an internal placeholder rather than real content.
+
+    Exact match after a bounded normalization (case-fold, collapse spaces and
+    hyphens to underscores, drop surrounding punctuation) so ``"NOT STATED"``,
+    ``"not-stated"`` and ``"not_stated."`` are all caught. No fuzzy matching and
+    no substring matching -- a genuine reason that merely contains one of these
+    words is never rejected.
+    """
+
+    token = unicodedata.normalize("NFKC", value).strip().strip(".,;:!?\"'()[]{}").casefold()
+    token = re.sub(r"[\s\-/]+", "_", token)
+    token = re.sub(r"_+", "_", token).strip("_")
+    return token in RESERVED_SENTINEL_VALUES
+
+
 _CORRECTION_CUES = (
     "noi nham", "nham", "khong phai", "thuc ra", "dinh chinh", "sua lai",
     "sua thanh", "doi thanh", "cho minh sua", "toi nham", "phai la",
@@ -374,6 +423,14 @@ def _resolve_value(
     if slot == "landlord_refusal_reason":
         value = str(proposal.value or "").strip()
         if not value or len(value) > 200:
+            return None
+        # This is the only free-text fact slot, so it is the only place a model
+        # can pass an internal placeholder off as a real user fact. A sentinel
+        # such as "not_stated" is not a reason the landlord gave -- accepting it
+        # would persist a machine token as testimony. Reject it here so the slot
+        # stays None (no reason recorded); "the landlord gave no reason" is
+        # carried by landlord_response_status, which is tri-state.
+        if is_reserved_sentinel(value):
             return None
         return value, spans[0]
 
