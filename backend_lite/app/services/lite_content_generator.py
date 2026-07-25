@@ -3,11 +3,115 @@ from __future__ import annotations
 from ..constants import LITE_MODEL_NAME
 from ..runtime.agent_state import AgentState
 from ..schemas.content import GeneratedContent
+from .deposit_case_facts import (
+    classify_follow_up_intent,
+    extract_facts,
+    extract_facts_from_text,
+    known_facts_summary_fragments,
+    select_clarifying_questions,
+)
+from .input_normalizer import InputNormalizer
+
+_DEPOSIT_CHECKLIST = [
+    "Hợp đồng thuê nhà hoặc giấy đặt cọc/giấy viết tay",
+    "Chứng từ chuyển khoản hoặc biên nhận",
+    "Tin nhắn/email trao đổi với chủ nhà",
+    "Timeline sự việc",
+]
+_DEPOSIT_NEXT_STEPS = [
+    "Gửi yêu cầu hoàn cọc bằng văn bản (tin nhắn/email) và nêu rõ mốc thời gian phản hồi.",
+    "Lưu giữ toàn bộ giấy tờ, chứng từ, tin nhắn liên quan đến việc đặt cọc và thuê nhà.",
+    "Nếu chủ nhà tiếp tục không hoàn cọc, tham khảo luật sư hoặc cơ quan chức năng để được hỗ trợ giải quyết tranh chấp.",
+]
 
 
 class LiteContentGenerator:
     model_name = LITE_MODEL_NAME
     used_llm = False
+
+    def __init__(self) -> None:
+        self._normalizer = InputNormalizer()
+
+    def _generate_deposit_case(self, state: AgentState, used: list[str]) -> GeneratedContent:
+        normalizer = self._normalizer
+        prior_user_texts = [
+            message.content_text
+            for message in state.chat.history_messages
+            if message.role == "user" and message.content_text
+        ]
+        current_text = state.request.question
+
+        prior_facts = extract_facts(prior_user_texts, normalizer)
+        current_facts = extract_facts_from_text(current_text, normalizer)
+        facts = prior_facts.merge(current_facts)
+
+        already_asked: set[str] = set()
+        for message in state.chat.history_messages:
+            if message.role == "assistant" and message.content_json is not None:
+                ids = message.content_json.metadata.get("asked_question_ids")
+                if ids:
+                    already_asked.update(ids)
+
+        acknowledgment_fragments = known_facts_summary_fragments(facts)
+        acknowledgment = (
+            "Đã ghi nhận: " + "; ".join(acknowledgment_fragments) + ". " if acknowledgment_fragments else ""
+        )
+
+        if not state.chat.used_current_chat_history:
+            selected = select_clarifying_questions(facts, already_asked)
+            new_asked = sorted(already_asked | {question_id for question_id, _ in selected})
+            summary = (
+                acknowledgment
+                + "Đây là tranh chấp tiền đặt cọc thuê nhà; hướng xử lý cụ thể còn phụ thuộc vào thỏa thuận, "
+                "chứng từ và diễn biến thực tế giữa hai bên."
+            )
+            return GeneratedContent(
+                summary=summary,
+                clarifying_questions=[text for _, text in selected],
+                checklist=list(_DEPOSIT_CHECKLIST),
+                next_steps=list(_DEPOSIT_NEXT_STEPS),
+                used_source_ids=used,
+                asked_question_ids=new_asked,
+            )
+
+        intent = classify_follow_up_intent(current_text, current_facts, normalizer)
+
+        if intent == "risk_concern":
+            summary = (
+                "Có một số dấu hiệu rủi ro vì nhà chưa được bàn giao và tiền cọc chưa được hoàn trả, nhưng hệ "
+                "thống không thể kết luận đây là lừa đảo hình sự hay khẳng định chắc chắn bạn sẽ mất tiền. Khả "
+                "năng lấy lại tiền phụ thuộc vào thỏa thuận đặt cọc, chữ ký, chứng từ giao tiền và các trao đổi "
+                "giữa hai bên."
+            )
+            return GeneratedContent(
+                summary=summary,
+                clarifying_questions=[],
+                checklist=[],
+                next_steps=[
+                    "Tiếp tục thu thập chứng từ, tin nhắn và giấy tờ liên quan đến việc đặt cọc.",
+                    "Gửi yêu cầu hoàn cọc bằng văn bản; nếu chủ nhà vẫn từ chối, tham khảo luật sư hoặc cơ quan "
+                    "chức năng.",
+                ],
+                used_source_ids=used,
+                asked_question_ids=sorted(already_asked),
+            )
+
+        selected = select_clarifying_questions(facts, already_asked)
+        new_asked = sorted(already_asked | {question_id for question_id, _ in selected})
+        if intent == "fact_update":
+            update_fragments = known_facts_summary_fragments(current_facts)
+            lead = "Đã cập nhật thông tin: " + ("; ".join(update_fragments) if update_fragments else "thông tin mới") + ". "
+        else:
+            lead = acknowledgment
+        summary = lead + "Dựa trên thông tin hiện có, bạn nên thực hiện các bước sau để yêu cầu hoàn lại tiền cọc."
+        return GeneratedContent(
+            summary=summary,
+            clarifying_questions=[text for _, text in selected],
+            checklist=[],
+            next_steps=list(_DEPOSIT_NEXT_STEPS),
+            used_source_ids=used,
+            asked_question_ids=new_asked,
+        )
 
     async def generate(self, state: AgentState) -> GeneratedContent:
         topic = state.classification.detected_topic
@@ -104,23 +208,7 @@ class LiteContentGenerator:
             )
 
         if topic == "rental_deposit":
-            no_contract = "khong co hop dong" in state.classification.accent_insensitive_question
-            return GeneratedContent(
-                summary=(
-                    "Dù không có hợp đồng bằng văn bản, tranh chấp tiền cọc vẫn cần kiểm tra chứng từ, tin nhắn, biên nhận và diễn biến thực tế."
-                    if no_contract
-                    else "Vấn đề tiền cọc thuê nhà cần được xem xét từ hợp đồng, điều khoản tiền cọc, chứng từ và diễn biến thực tế."
-                ),
-                clarifying_questions=[
-                    "Bạn có hợp đồng thuê nhà bằng văn bản không?",
-                    "Có chứng từ chuyển khoản hoặc biên nhận tiền cọc không?",
-                    "Điều khoản hoàn trả hoặc mất cọc được ghi như thế nào?",
-                    "Số tiền cọc khoảng bao nhiêu?",
-                ],
-                checklist=["Hợp đồng thuê nhà nếu có", "Chứng từ thanh toán", "Tin nhắn hoặc biên nhận", "Timeline vụ việc"],
-                next_steps=["Gửi yêu cầu hoàn trả bằng văn bản; nếu không giải quyết được, hãy tham khảo luật sư hoặc cơ quan chức năng."],
-                used_source_ids=used,
-            )
+            return self._generate_deposit_case(state, used)
         if topic == "loan_dispute":
             return GeneratedContent(
                 summary="Khoản vay đến hạn chưa trả cần được làm rõ bằng chứng từ, tin nhắn và thỏa thuận giữa các bên.",

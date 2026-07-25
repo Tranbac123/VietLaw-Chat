@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .content import Confidence, Decision, Domain, RiskLevel, SourceObject
+from .content import (
+    Confidence,
+    Decision,
+    Domain,
+    ResponseKind,
+    RiskLevel,
+    SourceObject,
+    validate_response_kind_invariants,
+)
 
 UserType = Literal["citizen", "household_business", "foreign_visitor", "unknown"]
 
@@ -22,22 +30,40 @@ class AnalyzeRequest(BaseModel):
 class AnalyzeResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    # Additive discriminator (Gate C). Default "legal" preserves every pre-existing
+    # construction site (LiteResponseBuilder.build never sets this field) unchanged.
+    response_kind: ResponseKind = "legal"
     contract_version: Literal["v1"]
     request_id: str
     chat_id: str
     user_message_id: str
     assistant_message_id: str
-    domain: Domain
-    risk_level: RiskLevel
-    decision: Decision
+    domain: Domain | None
+    risk_level: RiskLevel | None
+    decision: Decision | None
     summary: str
     clarifying_questions: list[str]
     checklist: list[str]
     next_steps: list[str]
     sources: list[SourceObject]
     safety_notice: str
-    confidence: Confidence
+    confidence: Confidence | None
     metadata: dict[str, Any]
+
+    @model_validator(mode="after")
+    def _check_response_kind_invariants(self) -> "AnalyzeResponse":
+        validate_response_kind_invariants(
+            response_kind=self.response_kind,
+            domain=self.domain,
+            risk_level=self.risk_level,
+            decision=self.decision,
+            confidence=self.confidence,
+            sources=self.sources,
+            clarifying_questions=self.clarifying_questions,
+            checklist=self.checklist,
+            next_steps=self.next_steps,
+        )
+        return self
 
 
 class ErrorBody(BaseModel):

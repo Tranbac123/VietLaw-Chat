@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import re
 from time import perf_counter
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
+if TYPE_CHECKING:
+    from ..services.demo_llm_generation import DemoOrchestrator
+
+from ..application.conversation_router import route as route_conversation
+from ..application.response_templates import render_social_response
+from ..application.social_intent_detector import detect_social_intent
 from ..constants import CONTRACT_VERSION
+from ..contracts.conversation_route import ConversationRoute
 from ..errors import ChatNotFoundError, InvalidRequestError
 from ..schemas.api import AnalyzeRequest, AnalyzeResponse
 from ..schemas.chat import ChatMessage
@@ -29,6 +38,123 @@ from .protocols import (
 )
 
 
+_REFERENTIAL_ISSUE_PHRASES = (
+    "van de nay",
+    "vu nay",
+    "truong hop tren",
+    "thoa thuan do",
+    "van de do",
+    "viec do",
+    "nhu tren",
+)
+_ELLIPTICAL_FOLLOW_UP_PHRASES = (
+    "nen lam gi",
+    "phai lam sao",
+    "can chuan bi gi",
+    "dang gap van de gi",
+    "co rui ro khong",
+)
+_SUBJECT_TOKENS = {"toi", "cong ty", "chu nha", "nguoi khac", "ben ban", "canh sat", "cong an"}
+_PROBLEM_TOKENS = {"bi", "khong", "no", "phat", "giu", "mat", "tranh chap"}
+_LEGAL_OBJECT_TOKENS = {
+    "tien", "nha", "luong", "hop dong", "bien ban", "mu bao hiem", "den do", "tai san", "khoan vay",
+}
+
+
+def _has_phrase(text: str, phrases: set[str]) -> bool:
+    return any(phrase in text for phrase in phrases)
+
+
+def _issue_signature(accentless_text: str, detected_topic: str | None = None) -> str | None:
+    """Return a small, bounded issue signature, never a response or legal conclusion."""
+    if "khong doi mu bao hiem" in accentless_text or "vuot den do" in accentless_text:
+        return "traffic_violation"
+    if "cong ty" in accentless_text and any(
+        phrase in accentless_text for phrase in ("no luong", "khong tra luong", "cham luong")
+    ):
+        return "employment_wage"
+    if re.search(r"\bcho\b.{0,40}\bvay\b", accentless_text) or any(
+        phrase in accentless_text for phrase in ("vay tien", "khoan vay", "khong tra no")
+    ):
+        return "loan_dispute"
+    if any(
+        phrase in accentless_text
+        for phrase in ("tien coc", "dat coc", "khoan coc", "thue nha", "chu nha")
+    ):
+        return "rental_deposit"
+    if "lap bien ban" in accentless_text and any(
+        phrase in accentless_text for phrase in ("giao thong", "den do", "loi vi pham")
+    ):
+        return "traffic_violation"
+    if detected_topic and detected_topic not in {
+        "unsupported_language", "unsupported_non_legal", "vague_legal",
+    }:
+        return detected_topic
+
+    word_count = len(re.findall(r"[a-z0-9]+", accentless_text))
+    if (
+        word_count >= 5
+        and _has_phrase(accentless_text, _SUBJECT_TOKENS)
+        and _has_phrase(accentless_text, _PROBLEM_TOKENS)
+        and _has_phrase(accentless_text, _LEGAL_OBJECT_TOKENS)
+    ):
+        return "standalone_legal_problem"
+    return None
+
+
+def _is_referential_follow_up(accentless_text: str) -> bool:
+    stripped = accentless_text.strip(" !?.,")
+    if any(phrase in stripped for phrase in _REFERENTIAL_ISSUE_PHRASES):
+        return True
+    if any(phrase in stripped for phrase in _ELLIPTICAL_FOLLOW_UP_PHRASES):
+        return True
+    return stripped.startswith("con ") or (" van " in f" {stripped} " and "thi sao" in stripped)
+
+
+def _assistant_topic_after(messages: list[ChatMessage], user_index: int) -> str | None:
+    for message in messages[user_index + 1:]:
+        if message.role == "user":
+            return None
+        if message.role != "assistant" or message.content_json is None:
+            continue
+        if message.content_json.response_kind == "social":
+            return None
+        topic = message.content_json.metadata.get("detected_topic")
+        return topic if isinstance(topic, str) else None
+    return None
+
+
+def _latest_issue_boundary(
+    messages: list[ChatMessage], normalizer: InputNormalizer
+) -> tuple[int, str] | None:
+    latest: tuple[int, str] | None = None
+    for index, message in enumerate(messages):
+        if message.role != "user" or not message.content_text:
+            continue
+        normalized, accentless = normalizer.normalize(message.content_text)
+        if detect_social_intent(normalized) is not None or _is_referential_follow_up(accentless):
+            continue
+        signature = _issue_signature(accentless, _assistant_topic_after(messages, index))
+        if signature is not None:
+            latest = (index, signature)
+    return latest
+
+
+def _context_terms(messages: list[ChatMessage], normalizer: InputNormalizer) -> list[str]:
+    terms: list[str] = []
+    for message in messages:
+        if message.content_text:
+            _, accentless = normalizer.normalize(message.content_text)
+            terms.append(accentless)
+        elif message.content_json:
+            text = " ".join(
+                [message.content_json.summary, *message.content_json.checklist, *message.content_json.next_steps]
+            )
+            _, accentless = normalizer.normalize(text)
+            terms.append(accentless)
+    return terms
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -46,6 +172,7 @@ class AgentRuntime:
         safety_guard: SafetyGuard,
         response_builder: ResponseBuilder,
         title_service: TitleService,
+        demo_orchestrator: "DemoOrchestrator | None" = None,
     ) -> None:
         self.chat_store = chat_store
         self.context_builder = context_builder
@@ -61,6 +188,7 @@ class AgentRuntime:
         self.safety_guard = safety_guard
         self.response_builder = response_builder
         self.title_service = title_service
+        self.demo_orchestrator = demo_orchestrator
 
     @contextmanager
     def _phase(self, state: AgentState, name: str):
@@ -74,6 +202,27 @@ class AgentRuntime:
             state.trace.completed_phases.append(name)
         finally:
             state.trace.elapsed_ms[name] = round((perf_counter() - started) * 1000, 3)
+
+    def _isolate_or_select_active_issue(self, state: AgentState) -> None:
+        history = state.chat.history_messages
+        boundary = _latest_issue_boundary(history, self.normalizer)
+        current_signature = None
+        if not _is_referential_follow_up(state.classification.accent_insensitive_question):
+            current_signature = _issue_signature(state.classification.accent_insensitive_question)
+
+        if current_signature is not None and (
+            boundary is None or current_signature != boundary[1]
+        ):
+            selected: list[ChatMessage] = []
+        elif boundary is not None:
+            selected = history[boundary[0]:]
+        else:
+            selected = history
+
+        state.chat.history_messages = selected
+        state.chat.history_message_count = len(selected)
+        state.chat.used_current_chat_history = bool(selected)
+        state.chat.context_topic_terms = _context_terms(selected, self.normalizer)
 
     async def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
         state = AgentState(
@@ -152,6 +301,97 @@ class AgentRuntime:
                 if detection.expected_decision:
                     state.classification.decision = detection.expected_decision
 
+        # DEMO VERTICAL SLICE V1 hook. Only active when a demo orchestrator was wired
+        # (feature flag on); otherwise this block is skipped entirely and the baseline
+        # runtime below is unchanged. Safety turns are never handled here -- the
+        # orchestrator returns None for them, deferring to the baseline pipeline.
+        if self.demo_orchestrator is not None:
+            demo_response = None
+            try:
+                with self._phase(state, "demo_vertical_slice"):
+                    demo_response = await self.demo_orchestrator.handle(state)
+            except Exception:  # noqa: BLE001 - contain demo failure; defer to baseline, no 500, no raw leak
+                state.trace.warnings.append("demo_vertical_slice_deferred")
+                demo_response = None
+            if demo_response is not None:
+                state.final_response = demo_response
+                with self._phase(state, "validate_final_response"):
+                    state.final_response = AnalyzeResponse.model_validate(
+                        state.final_response.model_dump(mode="json")
+                    )
+                with self._phase(state, "store_assistant_message"):
+                    content = AnalyzeContent.model_validate(
+                        state.final_response.model_dump(
+                            mode="json",
+                            include={
+                                "response_kind", "domain", "risk_level", "decision", "summary",
+                                "clarifying_questions", "checklist", "next_steps", "sources",
+                                "safety_notice", "confidence", "metadata",
+                            },
+                        )
+                    )
+                    self.chat_store.add_message(
+                        ChatMessage(
+                            message_id=state.persistence.assistant_message_id,
+                            chat_id=state.chat.chat_id,
+                            role="assistant",
+                            content_type="structured",
+                            content_text=None,
+                            content_json=content,
+                            created_at=utc_now(),
+                        )
+                    )
+                    state.persistence.assistant_message_stored = True
+                with self._phase(state, "return_response"):
+                    return state.final_response
+
+        with self._phase(state, "classify_conversation_intent"):
+            conversational_intent = None
+            if state.classification.detected_language == "vi" and not state.classification.unsafe_intent_detected:
+                conversational_intent = detect_social_intent(state.classification.normalized_question)
+            route_result = route_conversation(conversational_intent)
+
+        if route_result.route is ConversationRoute.DIRECT_RESPONSE:
+            with self._phase(state, "build_social_response"):
+                assert route_result.template_id is not None  # router invariant for DIRECT_RESPONSE
+                social_text = render_social_response(route_result.template_id)
+                state.final_response = self.response_builder.build_social(state, route_result, social_text)
+
+            with self._phase(state, "validate_final_response"):
+                state.final_response = AnalyzeResponse.model_validate(state.final_response.model_dump(mode="json"))
+
+            with self._phase(state, "store_assistant_message"):
+                response = state.final_response
+                content = AnalyzeContent.model_validate(
+                    response.model_dump(
+                        mode="json",
+                        include={
+                            "response_kind", "domain", "risk_level", "decision", "summary",
+                            "clarifying_questions", "checklist", "next_steps", "sources",
+                            "safety_notice", "confidence", "metadata",
+                        },
+                    )
+                )
+                self.chat_store.add_message(
+                    ChatMessage(
+                        message_id=state.persistence.assistant_message_id,
+                        chat_id=state.chat.chat_id,
+                        role="assistant",
+                        content_type="structured",
+                        content_text=None,
+                        content_json=content,
+                        created_at=utc_now(),
+                    )
+                )
+                state.persistence.assistant_message_stored = True
+
+            with self._phase(state, "return_response"):
+                return state.final_response
+
+        with self._phase(state, "resolve_active_issue_context"):
+            if not state.classification.unsafe_intent_detected:
+                self._isolate_or_select_active_issue(state)
+
         with self._phase(state, "classify_domain"):
             domain, topic = self.domain_classifier.classify(state)
             state.classification.domain = domain
@@ -208,7 +448,7 @@ class AgentRuntime:
                 response.model_dump(
                     mode="json",
                     include={
-                        "domain", "risk_level", "decision", "summary", "clarifying_questions",
+                        "response_kind", "domain", "risk_level", "decision", "summary", "clarifying_questions",
                         "checklist", "next_steps", "sources", "safety_notice", "confidence", "metadata",
                     },
                 )

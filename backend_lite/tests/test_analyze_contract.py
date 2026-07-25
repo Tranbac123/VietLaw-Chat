@@ -2,7 +2,7 @@ from backend_lite.app.constants import SAFETY_NOTICE
 
 
 REQUIRED_FIELDS = {
-    "contract_version", "request_id", "chat_id", "user_message_id", "assistant_message_id",
+    "response_kind", "contract_version", "request_id", "chat_id", "user_message_id", "assistant_message_id",
     "domain", "risk_level", "decision", "summary", "clarifying_questions", "checklist",
     "next_steps", "sources", "safety_notice", "confidence", "metadata",
 }

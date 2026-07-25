@@ -1,12 +1,45 @@
 from __future__ import annotations
 
 from ..constants import CONTRACT_VERSION, SAFETY_NOTICE
+from ..contracts.conversation_route import RouteResult
 from ..runtime.agent_state import AgentState
 from ..schemas.api import AnalyzeResponse
 from ..schemas.content import Confidence
 
 
 class LiteResponseBuilder:
+    def build_social(self, state: AgentState, route_result: RouteResult, text: str) -> AnalyzeResponse:
+        """Build a truthful `response_kind='social'` response for a direct
+        conversational short-circuit (greeting/identity/capability). Unlike
+        `build()` below, this method never reads `state.guard`/`state.retrieval`/
+        `state.generation` -- those are legal-pipeline fields that are never
+        populated for a social turn (see Gate C report section 8: the runtime
+        returns before any of those phases run).
+        """
+        return AnalyzeResponse(
+            response_kind="social",
+            contract_version=CONTRACT_VERSION,
+            request_id=state.request.request_id,
+            chat_id=state.chat.chat_id,
+            user_message_id=state.persistence.user_message_id,
+            assistant_message_id=state.persistence.assistant_message_id,
+            domain=None,
+            risk_level=None,
+            decision=None,
+            summary=text,
+            clarifying_questions=[],
+            checklist=[],
+            next_steps=[],
+            sources=[],
+            safety_notice="",
+            confidence=None,
+            metadata={
+                "conversational_intent": route_result.intent.value,
+                "conversation_route": route_result.route.value,
+                "reason_code": route_result.reason_code,
+            },
+        )
+
     def build(self, state: AgentState) -> AnalyzeResponse:
         content = state.guard.final_content
         if content is None:
@@ -42,6 +75,7 @@ class LiteResponseBuilder:
             "guard_warnings": list(state.trace.warnings),
             "citation_removed_source_ids": list(state.guard.citation_removed_source_ids),
             "citation_content_cautioned": state.guard.citation_content_cautioned,
+            "asked_question_ids": list(content.asked_question_ids),
         }
         return AnalyzeResponse(
             contract_version=CONTRACT_VERSION,

@@ -597,6 +597,10 @@ def test_concurrent_identical_completion_replays_one_stored_response(tmp_path: P
         for key, value in completion.response_payload.items()
         if key not in {"contract_version", "request_id", "chat_id", "user_message_id", "assistant_message_id"}
     }
+    # AnalyzeContent's additive `response_kind` field (Gate C) is not in the durable
+    # store's own _CONTENT_KEYS extraction, so it always falls back to its "legal"
+    # default when persisted here -- this adapter has no social-turn concept.
+    content["response_kind"] = "legal"
     assert json.loads(assistant["content_json"]) == content
 
 
@@ -660,6 +664,10 @@ def test_conflicting_concurrent_completion_never_overwrites_winner(
         for key, value in (stored.response_payload or {}).items()
         if key not in {"contract_version", "request_id", "chat_id", "user_message_id", "assistant_message_id"}
     }
+    # AnalyzeContent's additive `response_kind` field (Gate C) is not in the durable
+    # store's own _CONTENT_KEYS extraction, so it always falls back to its "legal"
+    # default when persisted here -- this adapter has no social-turn concept.
+    stored_content["response_kind"] = "legal"
     assert json.loads(assistants[0]["content_json"]) == stored_content
 
 

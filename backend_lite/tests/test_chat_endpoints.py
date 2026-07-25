@@ -39,7 +39,7 @@ def test_get_chat_returns_full_message_shape(client, analyze_payload):
     assert messages[1]["content_type"] == "structured"
     assert messages[1]["content_json"] is not None
     assert set(messages[1]["content_json"]) == {
-        "domain", "risk_level", "decision", "summary", "clarifying_questions", "checklist",
+        "response_kind", "domain", "risk_level", "decision", "summary", "clarifying_questions", "checklist",
         "next_steps", "sources", "safety_notice", "confidence", "metadata",
     }
 

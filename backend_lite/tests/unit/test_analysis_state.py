@@ -12,6 +12,14 @@ from backend_lite.app.contracts.internal import (
 )
 from backend_lite.app.contracts.state import AnalysisState
 from backend_lite.app.contracts.internal import RawInput
+from backend_lite.app.application.analysis_state import AnalysisInvariantError
+from backend_lite.app.application.deterministic_pipeline import (
+    run_deterministic_analysis,
+    state_without_final_stage,
+    validate_final_state,
+)
+from backend_lite.app.application.normalization import normalize_question
+from backend_lite.tests.unit.test_deterministic_pipeline import analysis_input
 
 
 def _identity() -> RequestIdentity:
@@ -69,3 +77,31 @@ def test_analysis_state_rejects_unknown_fields() -> None:
 def test_trace_is_a_direct_top_level_list() -> None:
     assert AnalysisState.model_fields["trace"].annotation == list[StageTrace]
     assert "trace" not in RequestIdentity.model_fields
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("  Xin   chào  ", "Xin chào"),
+        ("Dòng một\n\nDòng hai", "Dòng một Dòng hai"),
+        ("Tiếng Việt có dấu!", "Tiếng Việt có dấu!"),
+        ("Giữ dấu câu: đúng không?", "Giữ dấu câu: đúng không?"),
+    ],
+)
+def test_a3a_normalization_is_unicode_aware_and_idempotent(raw: str, expected: str) -> None:
+    assert normalize_question(raw) == expected
+    assert normalize_question(normalize_question(raw)) == expected
+
+
+def test_a3a_normalization_rejects_blank_and_kernel_state_is_frozen() -> None:
+    with pytest.raises(AnalysisInvariantError):
+        normalize_question(" \n\t ")
+    state = run_deterministic_analysis(analysis_input())
+    with pytest.raises(AttributeError):
+        state.normalized_question = "mutated"  # type: ignore[misc]
+
+
+def test_a3a_final_validator_fails_loud_for_missing_stage() -> None:
+    state = run_deterministic_analysis(analysis_input())
+    with pytest.raises(AnalysisInvariantError, match="stages"):
+        validate_final_state(state_without_final_stage(state), state.original_input)
