@@ -28,7 +28,13 @@ SourceType: TypeAlias = Literal[
     "demo_only",
     "safety_policy",
 ]
-ResponseKind: TypeAlias = Literal["legal", "social"]
+# "capability" and "scope" are FAST DEMO V2 additions. Like "social" they are
+# non-legal kinds: they carry no domain/risk/decision/confidence/sources, so a
+# greeting, a capability answer or a scope refusal can never render legal
+# badges or an empty source panel.
+ResponseKind: TypeAlias = Literal["legal", "social", "capability", "scope"]
+
+NON_LEGAL_RESPONSE_KINDS: frozenset[str] = frozenset({"social", "capability", "scope"})
 
 
 class SourceObject(BaseModel):
@@ -89,23 +95,23 @@ def validate_response_kind_invariants(
 
     if not response_kind_is_set:
         return
-    if response_kind == "social":
+    if response_kind in NON_LEGAL_RESPONSE_KINDS:
         if domain is not None:
-            raise ValueError("response_kind='social' requires domain=None")
+            raise ValueError(f"response_kind='{response_kind}' requires domain=None")
         if risk_level is not None:
-            raise ValueError("response_kind='social' requires risk_level=None")
+            raise ValueError(f"response_kind='{response_kind}' requires risk_level=None")
         if decision is not None:
-            raise ValueError("response_kind='social' requires decision=None")
+            raise ValueError(f"response_kind='{response_kind}' requires decision=None")
         if confidence is not None:
-            raise ValueError("response_kind='social' requires confidence=None")
+            raise ValueError(f"response_kind='{response_kind}' requires confidence=None")
         if sources:
-            raise ValueError("response_kind='social' requires sources=[]")
+            raise ValueError(f"response_kind='{response_kind}' requires sources=[]")
         if clarifying_questions:
-            raise ValueError("response_kind='social' requires clarifying_questions=[]")
+            raise ValueError(f"response_kind='{response_kind}' requires clarifying_questions=[]")
         if checklist:
-            raise ValueError("response_kind='social' requires checklist=[]")
+            raise ValueError(f"response_kind='{response_kind}' requires checklist=[]")
         if next_steps:
-            raise ValueError("response_kind='social' requires next_steps=[]")
+            raise ValueError(f"response_kind='{response_kind}' requires next_steps=[]")
         return
     # response_kind == "legal"
     if domain is None:
@@ -116,6 +122,15 @@ def validate_response_kind_invariants(
         raise ValueError("response_kind='legal' requires decision to be set")
     if confidence is None:
         raise ValueError("response_kind='legal' requires confidence to be set")
+
+
+class DraftBlock(BaseModel):
+    """FAST DEMO V2 copyable draft message."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    body: str
 
 
 class AnalyzeContent(BaseModel):
@@ -133,6 +148,12 @@ class AnalyzeContent(BaseModel):
     safety_notice: str
     confidence: Confidence | None
     metadata: dict[str, Any]
+    # FAST DEMO V2 optional presentation blocks. Additive and defaulted so every
+    # existing construction site and every persisted legacy row stays valid.
+    analysis: str | None = None
+    draft: DraftBlock | None = None
+    known_facts: list[str] = Field(default_factory=list)
+    uncertainty_notice: str | None = None
 
     @model_validator(mode="after")
     def _check_response_kind_invariants(self) -> "AnalyzeContent":
@@ -153,6 +174,10 @@ class AnalyzeContent(BaseModel):
     @model_serializer(mode="wrap")
     def _serialize_response_kind_when_set(self, handler):
         data = handler(self)
-        if "response_kind" not in self.model_fields_set:
-            data.pop("response_kind", None)
+        # Optional/additive fields are emitted only when explicitly set, so
+        # legacy persisted content and baseline responses keep their exact
+        # historical key set.
+        for field in ("response_kind", "analysis", "draft", "known_facts", "uncertainty_notice"):
+            if field not in self.model_fields_set:
+                data.pop(field, None)
         return data

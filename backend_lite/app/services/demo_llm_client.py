@@ -93,8 +93,21 @@ def _float(value: str | None, default: float) -> float:
 
 
 class LLMClientProtocol(Protocol):
-    async def complete(self, *, system: str, user: str, max_tokens: int, timeout_s: float) -> str:
-        """Return the raw model text for one prompt, or raise LLMClientError."""
+    async def complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_tokens: int,
+        timeout_s: float,
+        json_schema: dict | None = None,
+        temperature: float | None = None,
+    ) -> str:
+        """Return the raw model text for one prompt, or raise LLMClientError.
+
+        ``json_schema``/``temperature`` are FAST DEMO V2 additions and optional:
+        omitting them reproduces the original demo request exactly.
+        """
         ...
 
 
@@ -104,17 +117,35 @@ class AnthropicLLMClient:
     def __init__(self, config: DemoLLMConfig) -> None:
         self._config = config
 
-    async def complete(self, *, system: str, user: str, max_tokens: int, timeout_s: float) -> str:
+    async def complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_tokens: int,
+        timeout_s: float,
+        json_schema: dict | None = None,
+        temperature: float | None = None,
+    ) -> str:
         readiness = self._config.readiness_error()
         if readiness is not None:
             raise LLMClientError(readiness, "provider not ready")
+        # json_schema/temperature are FAST DEMO V2 additions. When omitted the
+        # payload is byte-identical to the original demo request.
+        output_config = (
+            {"format": {"type": "json_schema", "schema": json_schema}}
+            if json_schema is not None
+            else STRUCTURED_OUTPUT_CONFIG
+        )
         payload = {
             "model": self._config.model,
             "max_tokens": max_tokens,
             "system": system,
             "messages": [{"role": "user", "content": user}],
-            "output_config": STRUCTURED_OUTPUT_CONFIG,
+            "output_config": output_config,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
         headers = {
             "x-api-key": self._config.api_key or "",
             "anthropic-version": _ANTHROPIC_VERSION,
@@ -179,9 +210,26 @@ class FakeLLMClient:
         self._responses = list(responses or [])
         self._error = error
         self.calls = 0
+        self.last_system: str | None = None
+        self.last_user: str | None = None
+        self.last_json_schema: dict | None = None
+        self.last_temperature: float | None = None
 
-    async def complete(self, *, system: str, user: str, max_tokens: int, timeout_s: float) -> str:
+    async def complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        max_tokens: int,
+        timeout_s: float,
+        json_schema: dict | None = None,
+        temperature: float | None = None,
+    ) -> str:
         self.calls += 1
+        self.last_system = system
+        self.last_user = user
+        self.last_json_schema = json_schema
+        self.last_temperature = temperature
         if self._error is not None:
             raise LLMClientError(self._error, "fake error")
         if not self._responses:

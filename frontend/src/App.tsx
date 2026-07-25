@@ -33,9 +33,13 @@ function waitForMinimumThinkingDuration(remainingMs: number, cancellation: Promi
 }
 
 function pickAnalyzeContent(response: AnalyzeResponse): AnalyzeContent {
-  if (response.response_kind === 'social') {
+  if (
+    response.response_kind === 'social'
+    || response.response_kind === 'capability'
+    || response.response_kind === 'scope'
+  ) {
     return {
-      response_kind: 'social',
+      response_kind: response.response_kind,
       domain: null,
       risk_level: null,
       decision: null,
@@ -62,7 +66,17 @@ function pickAnalyzeContent(response: AnalyzeResponse): AnalyzeContent {
     safety_notice: response.safety_notice,
     confidence: response.confidence,
     metadata: response.metadata,
+    analysis: response.analysis ?? null,
+    draft: response.draft ?? null,
+    known_facts: response.known_facts ?? [],
+    uncertainty_notice: response.uncertainty_notice ?? null,
   };
+}
+
+function newClientRequestId(): string {
+  const cryptoRef = typeof crypto !== 'undefined' ? crypto : undefined;
+  if (cryptoRef?.randomUUID) return cryptoRef.randomUUID();
+  return `crid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function messageFromError(error: unknown): string {
@@ -123,6 +137,7 @@ export function App() {
   }, [refreshChats]);
 
   const submitQuestion = useCallback(async (question: string, requestedUserType = selectedUserType) => {
+    const clientRequestId = newClientRequestId();
     if (assistantResponsePhase !== 'idle' || loadingChat) return false;
 
     const generation = responseGenerationRef.current + 1;
@@ -164,6 +179,7 @@ export function App() {
           question,
           user_type: requestedUserType,
           language: 'vi',
+          client_request_id: clientRequestId,
         }).then((response) => ({ kind: 'response', response })),
         cancellation.then(() => ({ kind: 'cancelled' })),
       ]);
@@ -286,11 +302,6 @@ export function App() {
         />
       )}
     >
-      {!hasAssistantMessage && (
-        <p className="chat-level-notice" role="note">
-          VietLaw-Chat cung cấp định hướng ban đầu và không thay thế tư vấn pháp lý chuyên nghiệp.
-        </p>
-      )}
       <ChatWindow
         messages={messages}
         assistantResponsePhase={assistantResponsePhase}

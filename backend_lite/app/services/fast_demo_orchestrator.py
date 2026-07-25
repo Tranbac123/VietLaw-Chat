@@ -1,0 +1,479 @@
+"""FAST DEMO V2 orchestrator: the whole video path in one bounded flow.
+
+Frozen processing order (see the 48-hour contract, section 12):
+
+  1. ensure the state row exists (short transaction, no provider call inside);
+  2. load state, version, recent requests, bounded same-chat history;
+  3. duplicate check on client_request_id -> return stored response, 0 calls;
+  4. retain loaded_state_version;
+  5. deterministic route (social / capability / unsafe / scope / legal);
+  6. legal only: select source pack, ONE provider call, validate, build candidate;
+  7. short compare-and-swap transaction;
+  8. success -> return committed response;
+  9. CAS failure -> discard model output, never call again, controlled message.
+
+Two properties are enforced structurally rather than by convention:
+  * no SQLite transaction is ever open while the provider call runs -- the store
+    exposes only short load/commit calls and the call happens between them;
+  * ``_provider_calls`` is asserted <= 1 per ``handle`` execution.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+from ..constants import CONTRACT_VERSION, SAFETY_NOTICE
+from ..contracts.fast_demo import (
+    DraftRecord,
+    FastDemoPlan,
+    FastDemoState,
+    RecentRequestRecord,
+)
+from ..schemas.api import AnalyzeResponse
+from ..schemas.content import Confidence, DraftBlock, SourceObject
+from ..stores.fast_demo_state_store import (
+    FastDemoStateStore,
+    FastDemoStoreError,
+    LoadedFastDemoState,
+)
+from .demo_llm_client import LLMClientError, LLMClientProtocol
+from .fast_demo_fact_validation import apply_fact_updates
+from .fast_demo_prompt import SYSTEM_PROMPT, build_user_prompt
+from .fast_demo_routing import (
+    CAPABILITY_TEXT,
+    GREETING_TEXT,
+    SCOPE_TEXT,
+    UNSAFE_TEXT,
+    FastDemoRoute,
+    classify_route,
+    normalize_for_cue,
+)
+from .fast_demo_source_pack import FastDemoSourcePack
+
+DISCLAIMER_NOTICE = SAFETY_NOTICE
+
+_FALLBACK_SUMMARY = (
+    "Xin lỗi, tôi chưa tạo được phản hồi chi tiết cho lượt này. Thông tin bạn đã cung cấp "
+    "vẫn được giữ nguyên."
+)
+_FALLBACK_STEPS = [
+    "Giữ lại toàn bộ chứng từ chuyển khoản và tin nhắn trao đổi với chủ nhà.",
+    "Gửi yêu cầu hoàn trả tiền cọc bằng văn bản (tin nhắn hoặc email) để có bằng chứng.",
+]
+_CONCURRENCY_SUMMARY = (
+    "Cuộc trò chuyện vừa được cập nhật ở nơi khác nên tôi chưa áp dụng phản hồi này. "
+    "Bạn gửi lại tin nhắn giúp tôi nhé."
+)
+
+
+class FastDemoConfig:
+    """Pinned provider configuration for the video candidate."""
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        model: str | None,
+        api_key: str | None,
+        timeout_s: float,
+        max_output_tokens: int,
+        temperature: float,
+    ) -> None:
+        self.enabled = enabled
+        self.model = model
+        self.api_key = api_key
+        self.timeout_s = timeout_s
+        self.max_output_tokens = max_output_tokens
+        self.temperature = temperature
+
+    @property
+    def provider_ready(self) -> bool:
+        return bool(self.enabled and self.model and self.api_key)
+
+
+class FastDemoOrchestrator:
+    def __init__(
+        self,
+        *,
+        store: FastDemoStateStore,
+        source_pack: FastDemoSourcePack,
+        llm_client: LLMClientProtocol,
+        config: FastDemoConfig,
+    ) -> None:
+        self._store = store
+        self._pack = source_pack
+        self._client = llm_client
+        self._config = config
+
+    # -- entry point ---------------------------------------------------------
+
+    async def handle(self, state) -> AnalyzeResponse | None:
+        """Own the turn, or return None to defer to the baseline pipeline."""
+
+        provider_calls = 0
+        chat_id = state.chat.chat_id
+        message = state.request.question
+        client_request_id = getattr(state.request, "client_request_id", None) or ""
+
+        try:
+            loaded = self._store.load(chat_id)
+        except FastDemoStoreError:
+            # Schema/load failure must never surface as a 500 or a raw SQLite
+            # error; degrade to a safe deterministic response.
+            return self._fallback_response(state, FastDemoState(), reason="store_unavailable")
+
+        # Step 3: duplicate replay. Zero provider calls, zero mutation.
+        replay = loaded.find_recent(client_request_id)
+        if replay is not None:
+            return self._replay_response(state, replay)
+
+        loaded_state_version = loaded.state_version
+        has_active_matter = _has_active_matter(loaded.state)
+        route = classify_route(message, has_active_matter=has_active_matter)
+
+        if route is FastDemoRoute.SOCIAL:
+            return self._direct_response(state, "social", GREETING_TEXT)
+        if route is FastDemoRoute.CAPABILITY:
+            return self._direct_response(state, "capability", CAPABILITY_TEXT)
+        if route is FastDemoRoute.UNSAFE:
+            return self._direct_response(state, "scope", UNSAFE_TEXT, unsafe=True)
+        if route is FastDemoRoute.SCOPE_OR_UNSUPPORTED:
+            return self._direct_response(state, "scope", SCOPE_TEXT)
+
+        # ---- legal_conversation: at most one provider call -------------------
+        pack = self._pack.select(loaded.state, normalize_for_cue(message))
+        plan: FastDemoPlan | None = None
+        if self._config.provider_ready:
+            provider_calls = 1
+            plan = await self._request_plan(
+                message=message,
+                history=state.chat.history_messages,
+                loaded=loaded,
+                pack=pack,
+            )
+        assert provider_calls <= 1, "fast demo must never exceed one provider call"
+
+        if plan is None:
+            candidate_state = loaded.state.model_copy(deep=True)
+            response = self._fallback_response(state, candidate_state, reason="plan_unavailable")
+        else:
+            candidate_state, response = self._build_success(state, loaded, plan, pack, message)
+
+        # Step 7: short CAS transaction. The provider call is already finished.
+        committed = self._commit(
+            loaded=loaded,
+            expected_version=loaded_state_version,
+            candidate_state=candidate_state,
+            client_request_id=client_request_id,
+            response=response,
+        )
+        if committed is None:
+            # Step 9: stale output is discarded, never merged, never retried.
+            return self._concurrency_response(state)
+        return response
+
+    # -- provider ------------------------------------------------------------
+
+    async def _request_plan(
+        self,
+        *,
+        message: str,
+        history: list,
+        loaded: LoadedFastDemoState,
+        pack: list,
+    ) -> FastDemoPlan | None:
+        """Exactly one call. Any failure returns None -> deterministic fallback.
+
+        There is no repair call and no second attempt of any kind.
+        """
+
+        from ..contracts.fast_demo import FAST_DEMO_PLAN_JSON_SCHEMA
+
+        user_prompt = build_user_prompt(
+            current_message=message,
+            history=history,
+            state=loaded.state,
+            pack=pack,
+        )
+        try:
+            raw = await self._client.complete(
+                system=SYSTEM_PROMPT,
+                user=user_prompt,
+                max_tokens=self._config.max_output_tokens,
+                timeout_s=self._config.timeout_s,
+                json_schema=FAST_DEMO_PLAN_JSON_SCHEMA,
+                temperature=self._config.temperature,
+            )
+        except LLMClientError:
+            return None
+        except Exception:  # noqa: BLE001 - contained; CancelledError is BaseException
+            return None
+
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(payload, dict):
+            return None
+        try:
+            return FastDemoPlan.model_validate(payload)
+        except Exception:  # noqa: BLE001 - schema failure -> deterministic fallback
+            return None
+
+    # -- response construction ----------------------------------------------
+
+    def _build_success(
+        self, state, loaded: LoadedFastDemoState, plan: FastDemoPlan, pack: list, message: str
+    ) -> tuple[FastDemoState, AnalyzeResponse]:
+        outcome = apply_fact_updates(loaded.state, plan.fact_updates, message)
+        candidate = outcome.state
+        candidate.last_response_mode = plan.response_mode
+
+        draft_block: DraftBlock | None = None
+        if plan.draft is not None and plan.draft.body.strip():
+            draft_block = DraftBlock(
+                title=plan.draft.title.strip() or "Tin nhắn gửi chủ nhà",
+                body=plan.draft.body.strip(),
+            )
+            candidate.last_draft = DraftRecord(title=draft_block.title, body=draft_block.body)
+
+        sources = self._pack.resolve_selected(pack, plan.selected_source_ids)
+
+        response = AnalyzeResponse(
+            response_kind="legal",
+            contract_version=CONTRACT_VERSION,
+            request_id=state.request.request_id,
+            chat_id=state.chat.chat_id,
+            user_message_id=state.persistence.user_message_id,
+            assistant_message_id=state.persistence.assistant_message_id,
+            domain="civil_dispute",
+            risk_level="medium",
+            decision=_decision_for(plan.response_mode),
+            summary=plan.summary.strip(),
+            clarifying_questions=_clean(plan.clarifying_questions),
+            checklist=_clean(plan.checklist),
+            next_steps=_clean(plan.next_steps),
+            sources=sources,
+            safety_notice=SAFETY_NOTICE,
+            confidence=Confidence(domain=0.9, risk=0.75, answer=0.78),
+            analysis=(plan.analysis or "").strip() or None,
+            draft=draft_block,
+            known_facts=_known_facts(candidate),
+            uncertainty_notice=(plan.uncertainty_notice or "").strip() or None,
+            metadata=_metadata(
+                route="legal_conversation",
+                mode=plan.response_mode,
+                extra={"applied_slots": sorted({u.slot for u in outcome.applied})},
+            ),
+        )
+        return candidate, response
+
+    def _direct_response(
+        self, state, kind: str, text: str, *, unsafe: bool = False
+    ) -> AnalyzeResponse:
+        """social / capability / scope: zero provider calls and, structurally,
+        no domain, risk, decision, confidence or sources."""
+
+        return AnalyzeResponse(
+            response_kind=kind,  # type: ignore[arg-type]
+            contract_version=CONTRACT_VERSION,
+            request_id=state.request.request_id,
+            chat_id=state.chat.chat_id,
+            user_message_id=state.persistence.user_message_id,
+            assistant_message_id=state.persistence.assistant_message_id,
+            domain=None,
+            risk_level=None,
+            decision=None,
+            summary=text,
+            clarifying_questions=[],
+            checklist=[],
+            next_steps=[],
+            sources=[],
+            safety_notice="",
+            confidence=None,
+            metadata=_metadata(route=kind, mode=None, extra={"unsafe": unsafe}),
+        )
+
+    def _fallback_response(self, state, current: FastDemoState, *, reason: str) -> AnalyzeResponse:
+        """Useful deterministic response. Preserves accepted facts, invents nothing."""
+
+        known = _known_facts(current)
+        summary = _FALLBACK_SUMMARY
+        return AnalyzeResponse(
+            response_kind="legal",
+            contract_version=CONTRACT_VERSION,
+            request_id=state.request.request_id,
+            chat_id=state.chat.chat_id,
+            user_message_id=state.persistence.user_message_id,
+            assistant_message_id=state.persistence.assistant_message_id,
+            domain="civil_dispute",
+            risk_level="medium",
+            decision="answer_with_guidance",
+            summary=summary,
+            clarifying_questions=[],
+            checklist=[],
+            next_steps=list(_FALLBACK_STEPS),
+            sources=[],
+            safety_notice=SAFETY_NOTICE,
+            confidence=Confidence(domain=0.6, risk=0.6, answer=0.4),
+            analysis=None,
+            draft=None,
+            known_facts=known,
+            uncertainty_notice=(
+                "Đây là phản hồi dự phòng nên chưa có phân tích chi tiết cho lượt này."
+            ),
+            metadata=_metadata(route="legal_conversation", mode="fallback", extra={"reason": reason}),
+        )
+
+    def _concurrency_response(self, state) -> AnalyzeResponse:
+        return AnalyzeResponse(
+            response_kind="scope",
+            contract_version=CONTRACT_VERSION,
+            request_id=state.request.request_id,
+            chat_id=state.chat.chat_id,
+            user_message_id=state.persistence.user_message_id,
+            assistant_message_id=state.persistence.assistant_message_id,
+            domain=None,
+            risk_level=None,
+            decision=None,
+            summary=_CONCURRENCY_SUMMARY,
+            clarifying_questions=[],
+            checklist=[],
+            next_steps=[],
+            sources=[],
+            safety_notice="",
+            confidence=None,
+            metadata=_metadata(route="scope", mode="concurrency_retry", extra={}),
+        )
+
+    def _replay_response(self, state, record: RecentRequestRecord) -> AnalyzeResponse:
+        """Return the stored response verbatim, re-pointed at this HTTP turn's
+        message IDs so the transcript stays consistent."""
+
+        payload: dict[str, Any] = dict(record.response_json)
+        payload["request_id"] = state.request.request_id
+        payload["chat_id"] = state.chat.chat_id
+        payload["user_message_id"] = state.persistence.user_message_id
+        payload["assistant_message_id"] = state.persistence.assistant_message_id
+        metadata = dict(payload.get("metadata") or {})
+        metadata["fast_demo_replay"] = True
+        payload["metadata"] = metadata
+        try:
+            return AnalyzeResponse.model_validate(payload)
+        except Exception:  # noqa: BLE001 - unreadable stored row -> safe fallback
+            return self._fallback_response(state, FastDemoState(), reason="replay_unreadable")
+
+    # -- persistence ---------------------------------------------------------
+
+    def _commit(
+        self,
+        *,
+        loaded: LoadedFastDemoState,
+        expected_version: int,
+        candidate_state: FastDemoState,
+        client_request_id: str,
+        response: AnalyzeResponse,
+    ) -> bool | None:
+        """Compare-and-swap. None means a concurrent turn won."""
+
+        record = RecentRequestRecord(
+            client_request_id=client_request_id or response.request_id,
+            response_json=response.model_dump(mode="json"),
+            applied_state_version=expected_version + 1,
+        )
+        recent = [*loaded.recent_requests, record]
+        try:
+            ok = self._store.commit_state(
+                chat_id=loaded.chat_id,
+                expected_version=expected_version,
+                state=candidate_state,
+                recent_requests=recent,
+            )
+        except FastDemoStoreError:
+            # A failed write must not fabricate a "committed" answer, but the
+            # user still gets their response for this turn.
+            return True
+        return True if ok else None
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _has_active_matter(state: FastDemoState) -> bool:
+    facts = state.facts
+    return bool(
+        facts.deposit_amount is not None
+        or facts.written_deposit_agreement_status != "unknown"
+        or facts.payment_evidence_status != "unknown"
+        or facts.deposit_returned_status != "unknown"
+        or state.user_goal
+    )
+
+
+def _decision_for(mode: str) -> str:
+    if mode == "clarify":
+        return "ask_clarifying_questions"
+    return "answer_with_guidance"
+
+
+def _clean(items: list[str]) -> list[str]:
+    return [item.strip() for item in items if isinstance(item, str) and item.strip()][:6]
+
+
+def _format_vnd(value: int) -> str:
+    return f"{value:,}".replace(",", ".") + " đồng"
+
+
+_TRI_LABELS = {
+    "written_deposit_agreement_status": ("Có giấy đặt cọc", "Không có giấy đặt cọc"),
+    "payment_evidence_status": ("Có chứng từ thanh toán", "Không có chứng từ thanh toán"),
+    "rental_contract_status": ("Có hợp đồng thuê nhà", "Không có hợp đồng thuê nhà"),
+    "property_handover_status": ("Đã được bàn giao nhà", "Chưa được bàn giao nhà"),
+    "deposit_returned_status": ("Đã được hoàn cọc", "Chưa được hoàn cọc"),
+    "written_refund_request_status": ("Đã gửi yêu cầu hoàn cọc bằng văn bản", "Chưa gửi yêu cầu bằng văn bản"),
+    "landlord_response_status": ("Chủ nhà đã phản hồi", "Chủ nhà chưa phản hồi"),
+}
+
+
+def _known_facts(state: FastDemoState) -> list[str]:
+    """Backend-owned rendering of accepted facts only. ``unknown`` never shows."""
+
+    lines: list[str] = []
+    facts = state.facts
+    if facts.deposit_amount is not None:
+        lines.append(f"Số tiền đặt cọc: {_format_vnd(facts.deposit_amount.value)}")
+    for slot, (present_label, absent_label) in _TRI_LABELS.items():
+        value = getattr(facts, slot, "unknown")
+        if value == "present":
+            lines.append(present_label)
+        elif value == "absent":
+            lines.append(absent_label)
+    if facts.payment_evidence_types:
+        readable = {
+            "bank_transfer": "sao kê chuyển khoản",
+            "receipt": "biên nhận",
+            "message": "tin nhắn",
+            "witness": "người làm chứng",
+            "other": "khác",
+        }
+        names = [readable.get(item, item) for item in facts.payment_evidence_types]
+        lines.append("Chứng cứ thanh toán: " + ", ".join(names))
+    if facts.landlord_refusal_reason:
+        lines.append(f"Lý do chủ nhà đưa ra: {facts.landlord_refusal_reason}")
+    return lines
+
+
+def _metadata(*, route: str, mode: str | None, extra: dict) -> dict:
+    data = {
+        "fast_demo": True,
+        "fast_demo_route": route,
+        "fast_demo_mode": mode,
+        "used_current_chat_history": False,
+    }
+    data.update(extra)
+    return data
+
+
+__all__ = ["FastDemoConfig", "FastDemoOrchestrator"]

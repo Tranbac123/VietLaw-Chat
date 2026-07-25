@@ -51,6 +51,7 @@ class AgentRuntime:
         response_builder: ResponseBuilder,
         title_service: TitleService,
         demo_orchestrator: "DemoOrchestrator | None" = None,
+        fast_demo_orchestrator=None,
     ) -> None:
         self.chat_store = chat_store
         self.context_builder = context_builder
@@ -67,6 +68,7 @@ class AgentRuntime:
         self.response_builder = response_builder
         self.title_service = title_service
         self.demo_orchestrator = demo_orchestrator
+        self.fast_demo_orchestrator = fast_demo_orchestrator
 
     @contextmanager
     def _phase(self, state: AgentState, name: str):
@@ -91,6 +93,7 @@ class AgentRuntime:
                 question=request.question,
                 user_type=request.user_type,
                 language=request.language,
+                client_request_id=request.client_request_id,
             )
         )
         state.persistence.user_message_id = f"msg_user_{uuid4().hex}"
@@ -157,6 +160,52 @@ class AgentRuntime:
                 state.classification.safety_flags = detection.safety_flags
                 if detection.expected_decision:
                     state.classification.decision = detection.expected_decision
+
+        # FAST DEMO V2 hook (48-hour video path). Active only when a fast-demo
+        # orchestrator was wired (VIETLAW_FAST_DEMO_V2_ENABLED). It runs ahead of
+        # the V1 demo slice and the baseline, owns its own deterministic safety
+        # route, and -- like the V1 hook -- any failure is contained and defers
+        # to the pipeline below rather than surfacing a 500.
+        if self.fast_demo_orchestrator is not None:
+            fast_response = None
+            try:
+                with self._phase(state, "fast_demo_v2"):
+                    fast_response = await self.fast_demo_orchestrator.handle(state)
+            except Exception:  # noqa: BLE001 - contain; never leak a raw error
+                state.trace.warnings.append("fast_demo_v2_deferred")
+                fast_response = None
+            if fast_response is not None:
+                state.final_response = fast_response
+                with self._phase(state, "validate_final_response"):
+                    state.final_response = AnalyzeResponse.model_validate(
+                        state.final_response.model_dump(mode="json")
+                    )
+                with self._phase(state, "store_assistant_message"):
+                    content = AnalyzeContent.model_validate(
+                        state.final_response.model_dump(
+                            mode="json",
+                            include={
+                                "response_kind", "domain", "risk_level", "decision", "summary",
+                                "clarifying_questions", "checklist", "next_steps", "sources",
+                                "safety_notice", "confidence", "metadata",
+                                "analysis", "draft", "known_facts", "uncertainty_notice",
+                            },
+                        )
+                    )
+                    self.chat_store.add_message(
+                        ChatMessage(
+                            message_id=state.persistence.assistant_message_id,
+                            chat_id=state.chat.chat_id,
+                            role="assistant",
+                            content_type="structured",
+                            content_text=None,
+                            content_json=content,
+                            created_at=utc_now(),
+                        )
+                    )
+                    state.persistence.assistant_message_stored = True
+                with self._phase(state, "return_response"):
+                    return state.final_response
 
         # DEMO VERTICAL SLICE V1 hook. Only active when a demo orchestrator was wired
         # (feature flag on); otherwise this block is skipped entirely and the baseline

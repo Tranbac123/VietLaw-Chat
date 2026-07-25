@@ -47,9 +47,21 @@ export interface AnalyzeRequest {
   question: string;
   user_type?: UserType;
   language?: 'vi';
+  /**
+   * Stable per-submission idempotency key. Created once when the user submits
+   * and reused for transport retries of that same submission, so a retry can
+   * neither spend a second provider call nor re-apply fact updates.
+   */
+  client_request_id?: string;
 }
 
-export type ResponseKind = 'legal' | 'social';
+export type ResponseKind = 'legal' | 'social' | 'capability' | 'scope';
+
+/** FAST DEMO V2 copyable draft message. */
+export interface DraftBlock {
+  title: string;
+  body: string;
+}
 
 interface AnalyzeResponseCommon {
   contract_version: string;
@@ -64,6 +76,11 @@ interface AnalyzeResponseCommon {
   sources: SourceObject[];
   safety_notice: string;
   metadata: Record<string, unknown>;
+  /** FAST DEMO V2 optional blocks (absent on baseline responses). */
+  analysis?: string | null;
+  draft?: DraftBlock | null;
+  known_facts?: string[];
+  uncertainty_notice?: string | null;
 }
 
 export interface LegalAnalyzeResponse extends AnalyzeResponseCommon {
@@ -74,15 +91,32 @@ export interface LegalAnalyzeResponse extends AnalyzeResponseCommon {
   confidence: Confidence;
 }
 
-export interface SocialAnalyzeResponse extends AnalyzeResponseCommon {
-  response_kind: 'social';
+interface NonLegalResponseFields extends AnalyzeResponseCommon {
   domain: null;
   risk_level: null;
   decision: null;
   confidence: null;
 }
 
-export type AnalyzeResponse = LegalAnalyzeResponse | SocialAnalyzeResponse;
+/** Each non-legal kind is its own single-literal member so TypeScript can
+ *  discriminate the union exactly. */
+export interface SocialAnalyzeResponse extends NonLegalResponseFields {
+  response_kind: 'social';
+}
+
+export interface CapabilityAnalyzeResponse extends NonLegalResponseFields {
+  response_kind: 'capability';
+}
+
+export interface ScopeAnalyzeResponse extends NonLegalResponseFields {
+  response_kind: 'scope';
+}
+
+export type AnalyzeResponse =
+  | LegalAnalyzeResponse
+  | SocialAnalyzeResponse
+  | CapabilityAnalyzeResponse
+  | ScopeAnalyzeResponse;
 
 interface AnalyzeContentCommon {
   summary: string;
@@ -92,6 +126,11 @@ interface AnalyzeContentCommon {
   sources: SourceObject[];
   safety_notice: string;
   metadata: Record<string, unknown>;
+  /** FAST DEMO V2 optional blocks (absent on baseline responses). */
+  analysis?: string | null;
+  draft?: DraftBlock | null;
+  known_facts?: string[];
+  uncertainty_notice?: string | null;
 }
 
 export interface LegalAnalyzeContent extends AnalyzeContentCommon {
@@ -102,15 +141,30 @@ export interface LegalAnalyzeContent extends AnalyzeContentCommon {
   confidence: Confidence;
 }
 
-export interface SocialAnalyzeContent extends AnalyzeContentCommon {
-  response_kind: 'social';
+interface NonLegalContentFields extends AnalyzeContentCommon {
   domain: null;
   risk_level: null;
   decision: null;
   confidence: null;
 }
 
-export type AnalyzeContent = LegalAnalyzeContent | SocialAnalyzeContent;
+export interface SocialAnalyzeContent extends NonLegalContentFields {
+  response_kind: 'social';
+}
+
+export interface CapabilityAnalyzeContent extends NonLegalContentFields {
+  response_kind: 'capability';
+}
+
+export interface ScopeAnalyzeContent extends NonLegalContentFields {
+  response_kind: 'scope';
+}
+
+export type AnalyzeContent =
+  | LegalAnalyzeContent
+  | SocialAnalyzeContent
+  | CapabilityAnalyzeContent
+  | ScopeAnalyzeContent;
 
 export type MessageRole = 'user' | 'assistant';
 export type ContentType = 'text' | 'structured';

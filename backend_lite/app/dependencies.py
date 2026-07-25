@@ -34,8 +34,73 @@ class AppContainer:
     runtime: AgentRuntime
 
 
+def _flag(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _demo_flag_enabled() -> bool:
-    return (os.environ.get("VIETLAW_DEMO_VERTICAL_SLICE_ENABLED") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return _flag("VIETLAW_DEMO_VERTICAL_SLICE_ENABLED")
+
+
+def fast_demo_enabled() -> bool:
+    return _flag("VIETLAW_FAST_DEMO_V2_ENABLED")
+
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        value = float(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _build_fast_demo_orchestrator(settings: Settings, snippet_store: JsonSnippetStore):
+    """Construct the FAST DEMO V2 orchestrator only when its flag is enabled.
+
+    Returns None otherwise, which keeps the flag-off path identical to the
+    checkpoint: the state table is never created, the orchestrator is never
+    called, and the runtime hook is skipped entirely.
+    """
+
+    if not fast_demo_enabled():
+        return None
+    try:
+        from .services.demo_llm_client import AnthropicLLMClient, DemoLLMConfig
+        from .services.fast_demo_orchestrator import FastDemoConfig, FastDemoOrchestrator
+        from .services.fast_demo_source_pack import DEPOSIT_AUTHORITY_ID, FastDemoSourcePack
+        from .stores.fast_demo_state_store import FastDemoStateStore
+
+        pack = FastDemoSourcePack.from_snippets(snippet_store.active_snippets())
+        if DEPOSIT_AUTHORITY_ID not in pack.available_ids:
+            return None
+
+        llm_config = DemoLLMConfig.from_env()
+        fast_config = FastDemoConfig(
+            enabled=llm_config.enabled,
+            model=llm_config.model,
+            api_key=llm_config.api_key,
+            timeout_s=_float_env("VIETLAW_FAST_DEMO_TIMEOUT_S", 30.0),
+            max_output_tokens=_int_env("VIETLAW_FAST_DEMO_MAX_TOKENS", 2048),
+            temperature=0.0,
+        )
+        store = FastDemoStateStore(settings.chat_db_path)
+        store.ensure_schema()
+        return FastDemoOrchestrator(
+            store=store,
+            source_pack=pack,
+            llm_client=AnthropicLLMClient(llm_config),
+            config=fast_config,
+        )
+    except Exception:  # noqa: BLE001 - fail closed to baseline, never crash startup
+        return None
 
 
 def _build_demo_orchestrator(snippet_store: JsonSnippetStore):
@@ -78,6 +143,7 @@ def build_container(settings: Settings) -> AppContainer:
     unsafe_store = JsonUnsafePatternStore(settings.unsafe_patterns_path)
     normalizer = InputNormalizer()
     demo_orchestrator = _build_demo_orchestrator(snippet_store)
+    fast_demo_orchestrator = _build_fast_demo_orchestrator(settings, snippet_store)
     runtime = AgentRuntime(
         chat_store=chat_store,
         context_builder=SameChatContextBuilder(chat_store, normalizer, settings.context_message_limit),
@@ -94,6 +160,7 @@ def build_container(settings: Settings) -> AppContainer:
         response_builder=LiteResponseBuilder(),
         title_service=ChatTitleService(),
         demo_orchestrator=demo_orchestrator,
+        fast_demo_orchestrator=fast_demo_orchestrator,
     )
     return AppContainer(settings, chat_store, snippet_store, unsafe_store, runtime)
 

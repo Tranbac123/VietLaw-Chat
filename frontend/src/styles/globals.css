@@ -348,3 +348,91 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   .typewriter-cursor,
   .answer-list-item--revealed { animation: none; }
 }
+
+/* ── FAST DEMO V2 blocks ─────────────────────────────────────────────────── */
+
+.structured-answer--fast-demo .answer-section { margin-top: 1rem; }
+
+.analysis-section p { margin: 0; line-height: 1.65; }
+
+.clarification-list,
+.checklist-section ul,
+.next-steps-section ol { margin: 0.35rem 0 0; padding-left: 1.35rem; }
+
+.clarification-list li,
+.checklist-section li,
+.next-steps-section li { margin: 0.3rem 0; line-height: 1.6; }
+
+.checklist-section {
+  background: var(--surface-muted, rgba(127, 127, 127, 0.08));
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+}
+
+.draft-card {
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.28));
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  background: var(--surface-raised, rgba(127, 127, 127, 0.06));
+}
+
+.draft-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.draft-card-head h3 { margin: 0; }
+
+.draft-copy-button {
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.35));
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 0.25rem 0.8rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.draft-copy-button:hover { background: rgba(127, 127, 127, 0.12); }
+
+.draft-body {
+  margin: 0.6rem 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+
+.known-facts-toggle {
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+  font-size: 0.86rem;
+  padding: 0;
+  cursor: pointer;
+}
+
+.known-facts-toggle:hover { opacity: 1; }
+
+.known-facts-list {
+  margin: 0.45rem 0 0;
+  padding-left: 1.35rem;
+  font-size: 0.9rem;
+  opacity: 0.9;
+}
+
+.uncertainty-notice {
+  margin-top: 0.9rem;
+  font-size: 0.88rem;
+  opacity: 0.8;
+  line-height: 1.6;
+}
+
+/* Wide content must scroll inside its own box, never the page body. */
+.structured-answer--fast-demo pre,
+.structured-answer--fast-demo table { overflow-x: auto; max-width: 100%; }

@@ -93,11 +93,11 @@ export function Composer({ inputDisabled, submitDisabled, isEmptyChat, onSend }:
         </div>
         <div className="composer-notices">
           <p className="composer-privacy">Không nhập số CCCD, tài khoản ngân hàng, địa chỉ cụ thể hoặc thông tin nhạy cảm.</p>
-          {isEmptyChat && (
-            <p className="composer-legal-reference">
-              Thông tin chỉ mang tính tham khảo, không thay thế tư vấn của luật sư hoặc hướng dẫn của cơ quan pháp lý có thẩm quyền.
-            </p>
-          )}
+          {/* Persistent legal disclaimer: rendered once by the shell, always
+              visible, and never repeated inside individual messages. */}
+          <p className="composer-legal-reference">
+            Thông tin chỉ mang tính tham khảo, không thay thế tư vấn của luật sư hoặc cơ quan có thẩm quyền.
+          </p>
         </div>
       </div>
     </form>

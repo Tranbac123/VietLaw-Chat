@@ -266,7 +266,13 @@ export function StructuredAnswer({
   // the same reveal animation as a normal message. Anything that is not literally
   // response_kind === 'social' (including older persisted messages without the field)
   // falls through to the existing full legal rendering below.
-  if (content.response_kind === 'social') {
+  // Inline literal comparison (not a hoisted boolean) so TypeScript narrows the
+  // discriminated union and the code below is known to be the legal variant.
+  if (
+    content.response_kind === 'social'
+    || content.response_kind === 'capability'
+    || content.response_kind === 'scope'
+  ) {
     return (
       <div className="structured-answer structured-answer--social">
         {isRevealing && (
@@ -286,6 +292,21 @@ export function StructuredAnswer({
           )}
         </p>
       </div>
+    );
+  }
+
+  // FAST DEMO V2 legal rendering. The fast-demo backend owns block selection,
+  // so the baseline follow-up suppression (which hides checklist/sources on any
+  // turn that used chat history) must not apply here.
+  if (content.metadata?.fast_demo === true) {
+    return (
+      <FastDemoAnswer
+        content={content}
+        visibleSummary={visibleSummary}
+        isRevealing={isRevealing}
+        showCursor={isRevealing && revealState.summaryLength < summaryGraphemes.length}
+        onSkip={() => completeNowRef.current?.()}
+      />
     );
   }
 
@@ -335,6 +356,138 @@ export function StructuredAnswer({
         animateItems={animateItems}
       />
       {revealState.showSources && visibleSources.length > 0 && <SourcePanel sources={visibleSources} />}
+    </div>
+  );
+}
+
+
+interface FastDemoAnswerProps {
+  content: AnalyzeContent;
+  visibleSummary: string;
+  isRevealing: boolean;
+  showCursor: boolean;
+  onSkip: () => void;
+}
+
+function DraftCard({ title, body }: { title: string; body: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(body);
+    } catch {
+      return;
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <section className="answer-section draft-card">
+      <div className="draft-card-head">
+        <h3>{title}</h3>
+        <button className="draft-copy-button" type="button" onClick={() => void copy()}>
+          {copied ? 'Đã sao chép' : 'Sao chép'}
+        </button>
+      </div>
+      <p className="draft-body">{body}</p>
+    </section>
+  );
+}
+
+function KnownFacts({ items }: { items: string[] }) {
+  const [open, setOpen] = useState(false);
+  if (items.length === 0) return null;
+
+  return (
+    <section className="answer-section known-facts">
+      <button
+        className="known-facts-toggle"
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        {open ? '▾' : '▸'} Thông tin đã ghi nhận ({items.length})
+      </button>
+      {open && (
+        <ul className="known-facts-list">
+          {items.map((item, index) => <li key={`fact-${index}`}>{item}</li>)}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function FastDemoAnswer({ content, visibleSummary, isRevealing, showCursor, onSkip }: FastDemoAnswerProps) {
+  const sources = content.sources;
+  const knownFacts = content.known_facts ?? [];
+
+  return (
+    <div className="structured-answer structured-answer--fast-demo">
+      {isRevealing && (
+        <button
+          className="answer-reveal-skip"
+          type="button"
+          onClick={onSkip}
+          aria-label="Hiển thị toàn bộ phản hồi ngay"
+        >
+          Hiện ngay
+        </button>
+      )}
+
+      <p className="answer-summary">
+        {visibleSummary}
+        {showCursor && <span className="typewriter-cursor" aria-hidden="true">▍</span>}
+      </p>
+
+      {content.analysis && (
+        <section className="answer-section analysis-section">
+          <h3>Phân tích sơ bộ</h3>
+          <p>{content.analysis}</p>
+        </section>
+      )}
+
+      {content.clarifying_questions.length > 0 && (
+        <section className="answer-section clarification-section">
+          <p className="clarification-lead">Để tôi hỗ trợ chính xác hơn, bạn cho tôi biết thêm:</p>
+          <ol className="clarification-list">
+            {content.clarifying_questions.map((item, index) => (
+              <li key={`q-${index}`}>{item}</li>
+            ))}
+          </ol>
+        </section>
+      )}
+
+      {content.checklist.length > 0 && (
+        <section className="answer-section checklist-section">
+          <h3>Chứng cứ nên chuẩn bị</h3>
+          <ul>
+            {content.checklist.map((item, index) => <li key={`c-${index}`}>{item}</li>)}
+          </ul>
+        </section>
+      )}
+
+      {content.next_steps.length > 0 && (
+        <section className="answer-section next-steps-section">
+          <h3>Bước tiếp theo</h3>
+          <ol>
+            {content.next_steps.map((item, index) => <li key={`n-${index}`}>{item}</li>)}
+          </ol>
+        </section>
+      )}
+
+      {content.draft && content.draft.body && (
+        <DraftCard title={content.draft.title} body={content.draft.body} />
+      )}
+
+      <KnownFacts items={knownFacts} />
+
+      {content.uncertainty_notice && (
+        <p className="uncertainty-notice">{content.uncertainty_notice}</p>
+      )}
+
+      {/* No sources selected -> no panel at all, never empty-source boilerplate. */}
+      {sources.length > 0 && <SourcePanel sources={sources} />}
     </div>
   );
 }
