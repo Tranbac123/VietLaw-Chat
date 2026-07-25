@@ -219,7 +219,11 @@ _RESPONDED_RE = re.compile(
 # A positive cue sitting inside a negation is not a response. "chua co phan
 # hoi" contains the literal "co phan hoi"; without this guard it would resolve
 # `present` -- the exact inverse of what the user said.
-_NEGATOR_RE = re.compile(r"\b(?:khong|chua|chang|chan)\b")
+# Accent-stripped negators only: khong <- khong, chua <- chua, chang <- chang.
+# `chan` is NOT a negator -- it is the stripped form of "chan" ("bored"), which
+# occurs in ordinary text ("chan qua, da phan hoi") and would silently suppress
+# a genuine response cue inside the left-context window.
+_NEGATOR_RE = re.compile(r"\b(?:khong|chua|chang)\b")
 _NEGATION_LOOKBEHIND = 16
 
 
