@@ -144,11 +144,12 @@ def test_fallback_copy_is_user_facing_not_technical(tmp_path: Path) -> None:
     summary = body["summary"]
     assert "phản hồi dự phòng" not in summary.lower()
     assert "provider" not in summary.lower()
-    assert "giữ lại" in summary
-    # The user still gets something actionable rather than a dead end.
-    assert body["next_steps"]
-    assert body["uncertainty_notice"]
-    assert "dự phòng" not in body["uncertainty_notice"].lower()
+    # This turn is a fact intake, so the contextual fallback acknowledges what
+    # was said and asks what help is wanted rather than emitting generic advice.
+    assert "ghi nhận" in summary
+    assert body["clarifying_questions"]
+    # Accepted facts are still carried so the user need not retype them.
+    assert isinstance(body["known_facts"], list)
 
 
 # -- structured-output toggle reaches the client ---------------------------
@@ -213,3 +214,98 @@ def test_anthropic_client_omits_output_config_when_unsupported() -> None:
     assert "output_config" not in captured
     assert captured["model"] == "claude-sonnet-4-6"
     assert captured["temperature"] == 0.0
+
+
+# -- prompt/schema contract: the exact live root cause ----------------------
+
+def test_prompt_specifies_the_exact_enum_and_field_names_the_model_got_wrong() -> None:
+    """Live root cause: the prompt named the fields but never their allowed
+    values or the fact_updates item shape, so the model invented
+    response_mode="fact_gathering", returned known_facts_summary as a string,
+    and used "new_value" instead of "operation"/"value"."""
+
+    from backend_lite.app.contracts.fast_demo import ALLOWED_SLOTS
+    from backend_lite.app.services.fast_demo_prompt import SYSTEM_PROMPT
+
+    for mode in ("acknowledge", "clarify", "guidance", "checklist",
+                 "next_steps", "draft", "correction", "redraft"):
+        assert f'"{mode}"' in SYSTEM_PROMPT, mode
+    for op in ("set", "affirm", "negate", "correct", "retract"):
+        assert f'"{op}"' in SYSTEM_PROMPT, op
+    assert '"operation"' in SYSTEM_PROMPT
+    assert '"value"' in SYSTEM_PROMPT
+    assert "new_value" in SYSTEM_PROMPT  # explicitly called out as wrong
+    assert "known_facts_summary" in SYSTEM_PROMPT
+    assert "MẢNG" in SYSTEM_PROMPT       # arrays are named as arrays
+    assert ALLOWED_SLOTS                  # allowlist still enforced elsewhere
+
+
+def test_the_exact_live_model_output_shape_now_validates() -> None:
+    """The literal payload captured from the live model before the prompt fix
+    must fail, and its corrected form must pass -- proving the mismatch was in
+    the prompt, not in the schema."""
+
+    from backend_lite.app.contracts.fast_demo import FastDemoPlan
+
+    broken = {
+        "response_kind": "legal",
+        "response_mode": "fact_gathering",             # not in our enum
+        "summary": "x",
+        "known_facts_summary": "Số tiền cọc: 20.000.000đ",   # string, not list
+        "fact_updates": [
+            {"slot": "deposit_amount", "new_value": 20000000, "evidence_quote": "20 triệu"}
+        ],
+        "selected_source_ids": ["civil_deposit_001"],
+    }
+    with pytest.raises(Exception):
+        FastDemoPlan.model_validate(broken)
+
+    fixed = {
+        "response_kind": "legal",
+        "response_mode": "acknowledge",
+        "summary": "x",
+        "known_facts_summary": ["Số tiền cọc: 20.000.000đ"],
+        "fact_updates": [
+            {"operation": "set", "slot": "deposit_amount",
+             "value": 20000000, "evidence_quote": "20 triệu"}
+        ],
+        "selected_source_ids": ["civil_deposit_001"],
+    }
+    plan = FastDemoPlan.model_validate(fixed)
+    assert plan.response_mode == "acknowledge"
+    assert plan.fact_updates[0].operation == "set"
+
+
+# -- 16/17/18: parsing discipline is unchanged -----------------------------
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '```json\n{"response_kind":"legal","response_mode":"acknowledge","summary":"x"}\n```',
+        'Đây là kết quả: {"response_kind":"legal","response_mode":"acknowledge","summary":"x"}',
+        '{"response_kind":"legal",',                       # truncated
+        'not json at all',
+    ],
+)
+def test_non_bare_json_is_still_rejected(tmp_path: Path, raw: str) -> None:
+    """No fence stripping and no JSON extraction from prose were added: the live
+    model returned a bare object, so neither was warranted."""
+
+    fake = FakeLLMClient(responses=[raw])
+    app = build(tmp_path, fake)
+    with TestClient(app) as client:
+        body = ask(client, LEGAL, "p-1")
+    assert body["metadata"]["fast_demo_mode"] == "fallback"
+    assert fake.calls == 1  # still exactly one call, no repair
+
+
+def test_local_validation_still_rejects_schema_valid_json_with_extra_keys(tmp_path: Path) -> None:
+    raw = json.dumps({
+        "response_kind": "legal", "response_mode": "acknowledge",
+        "summary": "x", "unexpected_key": 1,
+    })
+    fake = FakeLLMClient(responses=[raw])
+    app = build(tmp_path, fake)
+    with TestClient(app) as client:
+        body = ask(client, LEGAL, "p-2")
+    assert body["metadata"]["reason"] == "local_schema_validation_failure"

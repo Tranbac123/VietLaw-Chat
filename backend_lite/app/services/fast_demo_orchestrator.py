@@ -47,6 +47,8 @@ from .fast_demo_routing import (
     SCOPE_TEXT,
     UNSAFE_TEXT,
     FastDemoRoute,
+    LegalIntent,
+    classify_legal_intent,
     classify_route,
     normalize_for_cue,
 )
@@ -168,7 +170,10 @@ class FastDemoOrchestrator:
         if plan is None:
             candidate_state = loaded.state.model_copy(deep=True)
             response = self._fallback_response(
-                state, candidate_state, reason=self._last_failure or "provider_not_configured"
+                state,
+                candidate_state,
+                reason=self._last_failure or "provider_not_configured",
+                intent=classify_legal_intent(message),
             )
         else:
             candidate_state, response = self._build_success(state, loaded, plan, pack, message)
@@ -339,11 +344,24 @@ class FastDemoOrchestrator:
             metadata=_metadata(route=kind, mode=None, extra={"unsafe": unsafe}),
         )
 
-    def _fallback_response(self, state, current: FastDemoState, *, reason: str) -> AnalyzeResponse:
-        """Useful deterministic response. Preserves accepted facts, invents nothing."""
+    def _fallback_response(
+        self,
+        state,
+        current: FastDemoState,
+        *,
+        reason: str,
+        intent: LegalIntent = LegalIntent.GENERAL,
+    ) -> AnalyzeResponse:
+        """Contextual deterministic response for the user's actual turn.
+
+        Bounded classes (intake / next-steps / evidence / draft / general) rather
+        than one generic message. Every sentence is backend-authored and uses only
+        facts already accepted into state -- nothing is invented, no legal
+        conclusion is asserted, and no implementation vocabulary is exposed.
+        """
 
         known = _known_facts(current)
-        summary = _FALLBACK_SUMMARY
+        summary, questions, steps = _fallback_content(intent, current, known)
         return AnalyzeResponse(
             response_kind="legal",
             contract_version=CONTRACT_VERSION,
@@ -353,20 +371,18 @@ class FastDemoOrchestrator:
             assistant_message_id=state.persistence.assistant_message_id,
             domain="civil_dispute",
             risk_level="medium",
-            decision="answer_with_guidance",
+            decision="ask_clarifying_questions" if questions else "answer_with_guidance",
             summary=summary,
-            clarifying_questions=[],
+            clarifying_questions=questions,
             checklist=[],
-            next_steps=list(_FALLBACK_STEPS),
+            next_steps=steps,
             sources=[],
             safety_notice=SAFETY_NOTICE,
             confidence=Confidence(domain=0.6, risk=0.6, answer=0.4),
             analysis=None,
             draft=None,
             known_facts=known,
-            uncertainty_notice=(
-                "Bạn có thể nhắn lại để tôi phân tích kỹ hơn tình huống của bạn."
-            ),
+            uncertainty_notice=None,
             metadata=_metadata(route="legal_conversation", mode="fallback", extra={"reason": reason}),
         )
 
@@ -444,6 +460,105 @@ class FastDemoOrchestrator:
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Contextual fallback copy. Backend-authored, uses only accepted facts, asserts
+# no legal conclusion, and never names an internal mechanism.
+# ---------------------------------------------------------------------------
+
+_INTAKE_QUESTIONS = [
+    "Hiện chủ nhà đã phản hồi thế nào về khoản cọc này?",
+    "Bạn muốn tôi hỗ trợ phân tích tình huống, chuẩn bị chứng cứ, đề xuất bước tiếp theo, "
+    "hay soạn tin nhắn gửi chủ nhà?",
+]
+_NO_HANDOVER_QUESTIONS = [
+    "Hai bên có giấy đặt cọc hoặc thỏa thuận bằng văn bản không?",
+    "Hai bên đã thống nhất ngày nhận nhà hoặc bàn giao chưa?",
+]
+_NO_HANDOVER_STEPS = [
+    "Giữ lại sao kê chuyển khoản, tin nhắn trao đổi và mọi thỏa thuận bằng văn bản.",
+    "Nhắn cho chủ nhà bằng văn bản, đề nghị bàn giao như đã thỏa thuận hoặc nêu rõ lý do chưa "
+    "bàn giao, và trao đổi về việc hoàn lại tiền cọc.",
+    "Xem lại thỏa thuận để đối chiếu điều khoản bàn giao, hoàn cọc và trách nhiệm của mỗi bên.",
+    "Nếu trao đổi không có kết quả, bạn có thể cân nhắc hòa giải hoặc hỏi ý kiến luật sư cho "
+    "trường hợp cụ thể của mình.",
+]
+_EVIDENCE_STEPS = [
+    "Sao kê hoặc biên nhận cho khoản tiền đã đặt cọc.",
+    "Tin nhắn, email trao đổi với chủ nhà.",
+    "Giấy đặt cọc hoặc hợp đồng thuê nếu có.",
+    "Mốc thời gian sự việc và thông tin về việc nhận nhà.",
+]
+_GENERAL_STEPS = [
+    "Giữ lại chứng từ chuyển khoản và các trao đổi với chủ nhà.",
+    "Trao đổi với chủ nhà bằng văn bản để có căn cứ về sau.",
+]
+
+
+def _fallback_content(
+    intent: LegalIntent, current: FastDemoState, known: list[str]
+) -> tuple[str, list[str], list[str]]:
+    """Return (summary, clarifying_questions, next_steps) for one fallback class."""
+
+    acknowledged = _acknowledgement_sentence(current)
+
+    if intent is LegalIntent.FACT_INTAKE:
+        # Facts only: acknowledge and ask what help is wanted. Deliberately does
+        # NOT assume a refund dispute or tell the user to demand repayment.
+        summary = acknowledged or (
+            "Tôi đã ghi nhận thông tin bạn cung cấp về khoản tiền cọc."
+        )
+        if current.facts.payment_evidence_status == "present":
+            summary += " Sao kê chuyển khoản là chứng từ quan trọng để chứng minh việc bạn đã chuyển tiền."
+        return summary, list(_INTAKE_QUESTIONS), []
+
+    if intent is LegalIntent.NEXT_STEPS:
+        summary = (
+            (acknowledged + " " if acknowledged else "")
+            + "Việc chủ nhà chưa bàn giao nhà như thỏa thuận là điều cần làm rõ sớm. "
+            "Dưới đây là những bước bạn có thể làm ngay."
+        )
+        return summary, list(_NO_HANDOVER_QUESTIONS), list(_NO_HANDOVER_STEPS)
+
+    if intent is LegalIntent.EVIDENCE:
+        summary = (
+            (acknowledged + " " if acknowledged else "")
+            + "Đây là những giấy tờ bạn nên chuẩn bị cho tình huống này."
+        )
+        return summary, [], list(_EVIDENCE_STEPS)
+
+    if intent is LegalIntent.DRAFT:
+        summary = (
+            "Hiện tôi chưa soạn xong tin nhắn cho bạn. "
+            + (acknowledged + " " if acknowledged else "")
+            + "Bạn nhắn lại giúp tôi để tôi soạn lại nhé."
+        )
+        return summary, [], []
+
+    summary = (
+        (acknowledged + " " if acknowledged else "")
+        + "Bạn mô tả thêm tình huống hiện tại để tôi hỗ trợ cụ thể hơn nhé."
+    )
+    return summary, [], list(_GENERAL_STEPS)
+
+
+def _acknowledgement_sentence(current: FastDemoState) -> str:
+    """One sentence naming only facts already accepted into state."""
+
+    parts: list[str] = []
+    facts = current.facts
+    if facts.deposit_amount is not None:
+        parts.append(f"bạn đã đặt cọc {_format_vnd(facts.deposit_amount.value)}")
+    if facts.payment_evidence_status == "present":
+        parts.append("có chứng từ chuyển khoản")
+    if facts.written_deposit_agreement_status == "absent":
+        parts.append("chưa có giấy đặt cọc")
+    if facts.deposit_returned_status == "absent":
+        parts.append("chủ nhà chưa hoàn trả tiền cọc")
+    if not parts:
+        return ""
+    return "Tôi đã ghi nhận " + ", ".join(parts) + "."
+
 
 def _has_active_matter(state: FastDemoState) -> bool:
     facts = state.facts

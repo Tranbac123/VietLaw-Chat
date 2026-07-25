@@ -403,7 +403,9 @@ def test_invalid_provider_output_uses_fallback(tmp_path: Path, responses: list[s
     assert fake.calls == 1  # no repair call
     assert body["response_kind"] == "legal"
     assert body["summary"]
-    assert body["next_steps"]
+    # A fact-intake turn asks what help is wanted rather than emitting generic
+    # next steps; either way the user must get something actionable.
+    assert body["clarifying_questions"] or body["next_steps"]
     assert body["sources"] == []
     assert "Traceback" not in json.dumps(body)
 
@@ -431,7 +433,7 @@ def test_provider_not_configured_still_answers(tmp_path: Path) -> None:
         body = ask(client, "Tôi đã đặt cọc thuê nhà 20 triệu.", crid="n1")
     assert fake.calls == 0
     assert body["response_kind"] == "legal"
-    assert body["next_steps"]
+    assert body["clarifying_questions"] or body["next_steps"]
 
 
 # ---------------------------------------------------------------------------

@@ -192,6 +192,59 @@ def classify_route(text: str, *, has_active_matter: bool) -> FastDemoRoute:
 # "phản hồi dự phòng", provider/route/scope/schema/state. The assistant speaks as an
 # assistant, never about its own plumbing.
 
+class LegalIntent(str, Enum):
+    """Bounded intent within an already-classified legal turn.
+
+    Used only to choose which contextual fallback to render when the provider
+    fails. It never gates a provider call and never writes state.
+    """
+
+    FACT_INTAKE = "fact_intake"
+    NEXT_STEPS = "next_steps"
+    DRAFT = "draft"
+    EVIDENCE = "evidence"
+    GENERAL = "general"
+
+
+_DRAFT_CUES = (
+    "viet giup", "viet ho", "soan giup", "soan ho", "soan tin nhan", "viet tin nhan",
+    "cap nhat lai tin nhan", "viet lai", "soan lai", "gui lai tin nhan", "viet manh hon",
+)
+_EVIDENCE_CUES = (
+    "bang chung", "chung cu", "giay to gi", "chuan bi gi", "can chuan bi", "ho so",
+)
+_NEXT_STEP_CUES = (
+    "lam gi tiep", "lam gi bay gio", "tiep theo", "buoc tiep", "nen lam gi", "phai lam gi",
+    "xu ly the nao", "giai quyet the nao", "lam sao", "the nao bay gio",
+)
+# A turn that only reports facts: it states what happened but asks nothing.
+_QUESTION_CUES = (
+    "?", "lam gi", "the nao", "ra sao", "co nen", "co the", "gi khong", "khong a",
+    "bao lau", "o dau", "ai", "tai sao", "vi sao",
+)
+
+
+def classify_legal_intent(text: str) -> LegalIntent:
+    """Classify intent inside a legal turn. Deterministic, no provider call."""
+
+    normalized = normalize_for_cue(text)
+    raw = text.strip()
+
+    if _contains_any(normalized, _DRAFT_CUES):
+        return LegalIntent.DRAFT
+    if _contains_any(normalized, _EVIDENCE_CUES):
+        return LegalIntent.EVIDENCE
+    if _contains_any(normalized, _NEXT_STEP_CUES):
+        return LegalIntent.NEXT_STEPS
+
+    # No question mark and no interrogative cue => the user is supplying facts,
+    # not yet asking for anything. This is the intake case.
+    asks_something = raw.endswith("?") or _contains_any(normalized, _QUESTION_CUES)
+    if not asks_something:
+        return LegalIntent.FACT_INTAKE
+    return LegalIntent.GENERAL
+
+
 GREETING_TEXT = (
     "Xin chào! Tôi có thể giúp bạn xử lý tình huống tiền cọc thuê nhà: phân tích sự việc, "
     "xác định thông tin còn thiếu, chuẩn bị chứng cứ, gợi ý bước tiếp theo và soạn tin nhắn "
