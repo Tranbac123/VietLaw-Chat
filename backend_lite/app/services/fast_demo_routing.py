@@ -26,6 +26,7 @@ _SEPARATORS = re.compile(r"[-_/\\()\[\]{}.·,;:!?\"'“”‘’…]+")
 class FastDemoRoute(str, Enum):
     SOCIAL = "social"
     CAPABILITY = "capability"
+    ACKNOWLEDGMENT = "acknowledgment"
     LEGAL_CONVERSATION = "legal_conversation"
     UNSAFE = "unsafe"
     SCOPE_OR_UNSUPPORTED = "scope_or_unsupported"
@@ -78,6 +79,25 @@ _CAPABILITY_RE = re.compile(
     rf"|{_CAP_ACTOR}\s+ten\s+(?:la\s+)?gi"
     rf"|ten\s+{_CAP_ACTOR}\s+(?:la\s+)?gi"
     r"|who\s+are\s+you|what\s+are\s+you|what\s+can\s+you\s+do|help"
+    r")"
+    + _TAIL + r"$"
+)
+
+# Bare acknowledgments: "ok", "vâng", "cảm ơn". These carry no new instruction,
+# so they get a short reply rather than the scope blurb that used to answer them
+# — telling someone who just said "cảm ơn" that we only handle deposit matters
+# reads as though the assistant forgot the conversation it is in.
+#
+# Full-message anchored for the same reason as the greeting: "ok vậy tôi nên làm
+# gì?" carries a real question and must stay on the legal path.
+_ACKNOWLEDGMENT_RE = re.compile(
+    r"^(?:"
+    # "k" is deliberately absent: in Vietnamese chat it abbreviates "không" (no),
+    # not "ok", so treating it as agreement would misread a refusal.
+    r"ok|oke|okey|okay|okie|dc|duoc|duoc roi|ro|ro roi|hieu roi|da hieu"
+    r"|vang|da|u|um|uh|hm|hmm|yes|yep|yeah|sure|fine|got it|noted"
+    r"|dong y|nhat tri|chuan|dung roi|the nhe|vay nhe"
+    r"|cam on|cam on ban|cam on nhe|thanks|thank you|thank u|tks|thx|ty"
     r")"
     + _TAIL + r"$"
 )
@@ -165,6 +185,11 @@ def classify_route(text: str, *, has_active_matter: bool) -> FastDemoRoute:
         return FastDemoRoute.SOCIAL
     if _CAPABILITY_RE.match(normalized):
         return FastDemoRoute.CAPABILITY
+    # Bare acknowledgment. Checked before the topic cues so a standalone "được"
+    # is a reply, not a deposit keyword hit, but after the anchors above so an
+    # acknowledgment carrying a real question stays on its proper route.
+    if _ACKNOWLEDGMENT_RE.match(normalized):
+        return FastDemoRoute.ACKNOWLEDGMENT
 
     out_of_scope = _contains_any(normalized, _OUT_OF_SCOPE_CUES)
 
@@ -258,6 +283,20 @@ CAPABILITY_TEXT = (
     "đã phản hồi thế nào."
 )
 
+# Acknowledgments get two variants so the reply matches the conversation the
+# user is actually in. Neither asks the user to restate anything, and neither
+# claims a fact: they only offer to continue.
+ACKNOWLEDGMENT_TEXT_WITH_MATTER = (
+    "Vâng. Tôi vẫn giữ những thông tin bạn đã cung cấp về tình huống tiền cọc của bạn. "
+    "Bạn muốn tôi hỗ trợ tiếp phần nào — chuẩn bị chứng cứ, gợi ý bước tiếp theo, hay "
+    "soạn tin nhắn gửi chủ nhà?"
+)
+
+ACKNOWLEDGMENT_TEXT = (
+    "Vâng. Khi nào bạn cần hỗ trợ về tình huống tiền cọc thuê nhà, bạn cứ mô tả giúp tôi "
+    "sự việc nhé."
+)
+
 SCOPE_TEXT = (
     "Tôi tập trung hỗ trợ các tình huống liên quan đến tiền cọc thuê nhà. Bạn mô tả giúp tôi "
     "sự việc của mình — số tiền đã đặt cọc, giấy tờ hoặc chứng từ đang có, và chủ nhà đã phản "
@@ -272,6 +311,8 @@ UNSAFE_TEXT = (
 
 
 __all__ = [
+    "ACKNOWLEDGMENT_TEXT",
+    "ACKNOWLEDGMENT_TEXT_WITH_MATTER",
     "CAPABILITY_TEXT",
     "FastDemoRoute",
     "GREETING_TEXT",

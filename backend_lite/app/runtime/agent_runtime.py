@@ -101,8 +101,11 @@ class AgentRuntime:
 
         with self._phase(state, "validate_request"):
             state.request.question = state.request.question.strip()
-            if len(state.request.question) < 3:
-                raise InvalidRequestError("Câu hỏi phải có ít nhất 3 ký tự.")
+            # Whitespace-only stays invalid; every other non-empty message is a
+            # real turn and must reach routing. A short message the assistant
+            # cannot act on is answered, not rejected as malformed data.
+            if not state.request.question:
+                raise InvalidRequestError("Bạn nhập nội dung tin nhắn giúp tôi nhé.")
 
         with self._phase(state, "resolve_or_create_chat"):
             if state.request.requested_chat_id:

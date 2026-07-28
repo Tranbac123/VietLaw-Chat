@@ -130,11 +130,18 @@ describe('baseline send contract', () => {
     await sendViaControls(user, 'Câu hỏi lỗi');
     await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
 
-    // A safe error surfaces and the optimistic message is rolled back.
+    // A safe error surfaces and the submitted question stays in the transcript.
+    //
+    // This was `toBe(0)` while the composer held the sent text until the
+    // response arrived: rolling the message back was coherent then, because the
+    // text was still in the input. The composer now empties the instant a
+    // submission is accepted, so rolling the message back as well would erase
+    // the question outright. It is retained and replayed through the error
+    // banner's retry control instead.
     await waitFor(() => {
       expect(screen.getByText(/Không thể kết nối backend/)).toBeInTheDocument();
     });
-    expect(countUserMessagesWithText('Câu hỏi lỗi')).toBe(0);
+    expect(countUserMessagesWithText('Câu hỏi lỗi')).toBe(1);
 
     // Loading cleared and the composer is usable again.
     await waitForComposerReady();

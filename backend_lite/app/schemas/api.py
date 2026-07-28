@@ -23,7 +23,12 @@ class AnalyzeRequest(BaseModel):
 
     session_id: str = Field(min_length=1, max_length=128)
     chat_id: str | None = Field(default=None, min_length=1, max_length=128)
-    question: str = Field(min_length=3, max_length=3000)
+    # Any non-empty message is a legitimate turn: "ok", "hi" and "ừ" are things
+    # people actually send. A 3-character floor rejected them as malformed data
+    # before routing could ever see them. Emptiness is still refused, but by the
+    # runtime's post-trim check, so "" and "   " fail identically with one
+    # user-facing message rather than two different ones.
+    question: str = Field(min_length=1, max_length=3000)
     user_type: UserType = "unknown"
     language: str = Field(default="vi", min_length=2, max_length=16)
     # FAST DEMO V2 idempotency key: generated once per user submission by the

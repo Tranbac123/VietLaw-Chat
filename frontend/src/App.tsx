@@ -73,6 +73,18 @@ function pickAnalyzeContent(response: AnalyzeResponse): AnalyzeContent {
   };
 }
 
+/**
+ * The immutable record of a submission that was dispatched and then failed.
+ * Retry replays it verbatim, so the composer is never the store of record for
+ * in-flight text.
+ */
+interface Resubmission {
+  question: string;
+  clientRequestId: string;
+  userType: UserType;
+  temporaryUserMessageId: string;
+}
+
 function newClientRequestId(): string {
   const cryptoRef = typeof crypto !== 'undefined' ? crypto : undefined;
   if (cryptoRef?.randomUUID) return cryptoRef.randomUUID();
@@ -93,6 +105,7 @@ export function App() {
   const [loadingChat, setLoadingChat] = useState(false);
   const [loadingChats, setLoadingChats] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [failedSubmission, setFailedSubmission] = useState<Resubmission | null>(null);
   const [assistantResponsePhase, setAssistantResponsePhase] = useState<AssistantResponsePhase>('idle');
   const [animatingAssistantMessageId, setAnimatingAssistantMessageId] = useState<string | null>(null);
   const responseGenerationRef = useRef(0);
@@ -136,13 +149,23 @@ export function App() {
     void refreshChats();
   }, [refreshChats]);
 
-  const submitQuestion = useCallback(async (question: string, requestedUserType = selectedUserType) => {
-    const clientRequestId = newClientRequestId();
+  const submitQuestion = useCallback(async (
+    question: string,
+    onAccepted?: () => void,
+    resubmission?: Resubmission,
+  ) => {
+    // A retry reuses the original idempotency key, so a request the backend may
+    // already have processed replays instead of spending a second provider
+    // call, and reuses the original placeholder id so the message already in the
+    // transcript is replaced rather than duplicated.
+    const clientRequestId = resubmission?.clientRequestId ?? newClientRequestId();
+    const requestedUserType = resubmission?.userType ?? selectedUserType;
     if (assistantResponsePhase !== 'idle' || loadingChat) return false;
 
     const generation = responseGenerationRef.current + 1;
     responseGenerationRef.current = generation;
-    const temporaryUserMessageId = `temporary-user-${generation}`;
+    const temporaryUserMessageId = resubmission?.temporaryUserMessageId
+      ?? `temporary-user-${generation}`;
     const requestCreatedAt = new Date().toISOString();
     let cancelFlow!: () => void;
     const cancellation = new Promise<void>((resolve) => {
@@ -155,20 +178,30 @@ export function App() {
     });
 
     activeResponseFlowRef.current = { generation, temporaryUserMessageId, cancel: cancelFlow };
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      {
-        message_id: temporaryUserMessageId,
-        chat_id: activeChatId ?? `temporary-chat-${generation}`,
-        role: 'user',
-        content_type: 'text',
-        content_text: question,
-        content_json: null,
-        created_at: requestCreatedAt,
-      },
-    ]);
+    const optimisticUserMessage: ChatMessage = {
+      message_id: temporaryUserMessageId,
+      chat_id: activeChatId ?? `temporary-chat-${generation}`,
+      role: 'user',
+      content_type: 'text',
+      content_text: question,
+      content_json: null,
+      created_at: requestCreatedAt,
+    };
+    setMessages((currentMessages) => (
+      // On a retry the placeholder is already on screen; replace it in place so
+      // the transcript never shows the same question twice.
+      currentMessages.some((message) => message.message_id === temporaryUserMessageId)
+        ? currentMessages.map((message) => (
+          message.message_id === temporaryUserMessageId ? optimisticUserMessage : message
+        ))
+        : [...currentMessages, optimisticUserMessage]
+    ));
     setAssistantResponsePhase('thinking');
     setError(null);
+    setFailedSubmission(null);
+    // The submission is now accepted and about to be dispatched: this is the
+    // moment the composer may empty itself.
+    onAccepted?.();
     const requestStartedAt = performance.now();
 
     try {
@@ -225,8 +258,18 @@ export function App() {
       return true;
     } catch (caughtError) {
       if (responseGenerationRef.current !== generation) return false;
-      removeOptimisticUserMessage(temporaryUserMessageId);
+      // The question stays in the transcript. Rolling it back made sense only
+      // while the composer still held the text; now that the composer empties on
+      // acceptance, removing it too would erase the message entirely. Retry is
+      // offered from the error banner and reuses the snapshot below, so nothing
+      // has to be retyped and no automatic resend happens.
       setError(messageFromError(caughtError));
+      setFailedSubmission({
+        question,
+        clientRequestId,
+        userType: requestedUserType,
+        temporaryUserMessageId,
+      });
       setAssistantResponsePhase('idle');
       return false;
     } finally {
@@ -244,12 +287,19 @@ export function App() {
     sessionId,
   ]);
 
+  /** Replays the failed submission. Never triggered automatically. */
+  const retryFailedSubmission = useCallback(() => {
+    if (!failedSubmission) return;
+    void submitQuestion(failedSubmission.question, undefined, failedSubmission);
+  }, [failedSubmission, submitQuestion]);
+
   const openChat = useCallback(async (chatId: string) => {
     if (loadingChat || chatId === activeChatId) return;
 
     cancelResponseFlow();
     setLoadingChat(true);
     setError(null);
+    setFailedSubmission(null);
     try {
       const response = await getChat(chatId, sessionId);
       setActiveChatId(response.chat_id);
@@ -267,6 +317,7 @@ export function App() {
     setActiveChatId(null);
     setMessages([]);
     setError(null);
+    setFailedSubmission(null);
   }
 
   const handleAnimationComplete = useCallback((messageId: string) => {
@@ -309,7 +360,8 @@ export function App() {
         onAnimationComplete={handleAnimationComplete}
         showLanding={showLanding}
         error={error}
-        onDismissError={() => setError(null)}
+        onDismissError={() => { setError(null); setFailedSubmission(null); }}
+        onRetry={failedSubmission ? retryFailedSubmission : undefined}
       />
       <Composer
         inputDisabled={composerInputDisabled}

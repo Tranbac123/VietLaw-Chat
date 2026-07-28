@@ -15,6 +15,8 @@ interface ChatWindowProps {
   showLanding: boolean;
   error: string | null;
   onDismissError: () => void;
+  /** Present only when a dispatched submission failed and can be replayed. */
+  onRetry?: () => void;
 }
 
 export function ChatWindow({
@@ -25,6 +27,7 @@ export function ChatWindow({
   showLanding,
   error,
   onDismissError,
+  onRetry,
 }: ChatWindowProps) {
   const scrollRegionRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
@@ -65,7 +68,7 @@ export function ChatWindow({
 
   return (
     <section className="chat-window" aria-label="Khu vực chat">
-      {error && <ErrorBanner message={error} onDismiss={onDismissError} />}
+      {error && <ErrorBanner message={error} onDismiss={onDismissError} onRetry={onRetry} />}
 
       <div className="chat-scroll-region" ref={scrollRegionRef} onScroll={handleScroll}>
         {showLanding ? (

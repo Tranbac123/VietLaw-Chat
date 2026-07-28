@@ -38,10 +38,18 @@ from ..stores.fast_demo_state_store import (
     FastDemoStoreError,
     LoadedFastDemoState,
 )
+from .conversation_context import (
+    CONTEXT_WINDOW_POLICY,
+    NO_MATTER,
+    RecentMatter,
+    detect_recent_matter,
+)
 from .demo_llm_client import LLMClientError, LLMClientProtocol
 from .fast_demo_fact_validation import apply_fact_updates, is_reserved_sentinel
 from .fast_demo_prompt import SYSTEM_PROMPT, build_user_prompt
 from .fast_demo_routing import (
+    ACKNOWLEDGMENT_TEXT,
+    ACKNOWLEDGMENT_TEXT_WITH_MATTER,
     CAPABILITY_TEXT,
     GREETING_TEXT,
     SCOPE_TEXT,
@@ -142,17 +150,31 @@ class FastDemoOrchestrator:
             return self._replay_response(state, replay)
 
         loaded_state_version = loaded.state_version
-        has_active_matter = _has_active_matter(loaded.state)
+        # An unresolved matter counts as active when the *state* holds a fact OR
+        # when a recent user turn in this same chat described one. Without the
+        # second signal a chat whose facts were never extracted (provider
+        # unavailable, or no verifiable span) answered a legitimate follow-up
+        # with a scope refusal, asking the user to restate what they had just
+        # explained. The window is bounded and same-chat only.
+        recent = detect_recent_matter(
+            getattr(state.chat, "history_messages", []) or [], current_message=message
+        )
+        has_active_matter = _has_active_matter(loaded.state) or recent.active
         route = classify_route(message, has_active_matter=has_active_matter)
 
         if route is FastDemoRoute.SOCIAL:
-            return self._direct_response(state, "social", GREETING_TEXT)
+            # A greeting mid-conversation is answered, but it neither clears the
+            # active topic nor touches state: no commit runs on this path.
+            return self._direct_response(state, "social", GREETING_TEXT, recent=recent)
         if route is FastDemoRoute.CAPABILITY:
-            return self._direct_response(state, "capability", CAPABILITY_TEXT)
+            return self._direct_response(state, "capability", CAPABILITY_TEXT, recent=recent)
+        if route is FastDemoRoute.ACKNOWLEDGMENT:
+            text = ACKNOWLEDGMENT_TEXT_WITH_MATTER if has_active_matter else ACKNOWLEDGMENT_TEXT
+            return self._direct_response(state, "social", text, recent=recent)
         if route is FastDemoRoute.UNSAFE:
-            return self._direct_response(state, "scope", UNSAFE_TEXT, unsafe=True)
+            return self._direct_response(state, "scope", UNSAFE_TEXT, unsafe=True, recent=recent)
         if route is FastDemoRoute.SCOPE_OR_UNSUPPORTED:
-            return self._direct_response(state, "scope", SCOPE_TEXT)
+            return self._direct_response(state, "scope", SCOPE_TEXT, recent=recent)
 
         # ---- legal_conversation: at most one provider call -------------------
         pack = self._pack.select(loaded.state, normalize_for_cue(message))
@@ -174,9 +196,12 @@ class FastDemoOrchestrator:
                 candidate_state,
                 reason=self._last_failure or "provider_not_configured",
                 intent=classify_legal_intent(message),
+                recent=recent,
             )
         else:
-            candidate_state, response = self._build_success(state, loaded, plan, pack, message)
+            candidate_state, response = self._build_success(
+                state, loaded, plan, pack, message, recent
+            )
 
         # Step 7: short CAS transaction. The provider call is already finished.
         committed = self._commit(
@@ -273,7 +298,13 @@ class FastDemoOrchestrator:
     # -- response construction ----------------------------------------------
 
     def _build_success(
-        self, state, loaded: LoadedFastDemoState, plan: FastDemoPlan, pack: list, message: str
+        self,
+        state,
+        loaded: LoadedFastDemoState,
+        plan: FastDemoPlan,
+        pack: list,
+        message: str,
+        recent: RecentMatter = NO_MATTER,
     ) -> tuple[FastDemoState, AnalyzeResponse]:
         outcome = apply_fact_updates(loaded.state, plan.fact_updates, message)
         candidate = outcome.state
@@ -314,12 +345,19 @@ class FastDemoOrchestrator:
                 route="legal_conversation",
                 mode=plan.response_mode,
                 extra={"applied_slots": sorted({u.slot for u in outcome.applied})},
+                recent=recent,
             ),
         )
         return candidate, response
 
     def _direct_response(
-        self, state, kind: str, text: str, *, unsafe: bool = False
+        self,
+        state,
+        kind: str,
+        text: str,
+        *,
+        unsafe: bool = False,
+        recent: RecentMatter = NO_MATTER,
     ) -> AnalyzeResponse:
         """social / capability / scope: zero provider calls and, structurally,
         no domain, risk, decision, confidence or sources."""
@@ -341,7 +379,7 @@ class FastDemoOrchestrator:
             sources=[],
             safety_notice="",
             confidence=None,
-            metadata=_metadata(route=kind, mode=None, extra={"unsafe": unsafe}),
+            metadata=_metadata(route=kind, mode=None, extra={"unsafe": unsafe}, recent=recent),
         )
 
     def _fallback_response(
@@ -351,6 +389,7 @@ class FastDemoOrchestrator:
         *,
         reason: str,
         intent: LegalIntent = LegalIntent.GENERAL,
+        recent: RecentMatter = NO_MATTER,
     ) -> AnalyzeResponse:
         """Contextual deterministic response for the user's actual turn.
 
@@ -361,7 +400,7 @@ class FastDemoOrchestrator:
         """
 
         known = _known_facts(current)
-        summary, questions, steps = _fallback_content(intent, current, known)
+        summary, questions, steps = _fallback_content(intent, current, known, recent)
         return AnalyzeResponse(
             response_kind="legal",
             contract_version=CONTRACT_VERSION,
@@ -383,7 +422,12 @@ class FastDemoOrchestrator:
             draft=None,
             known_facts=known,
             uncertainty_notice=None,
-            metadata=_metadata(route="legal_conversation", mode="fallback", extra={"reason": reason}),
+            metadata=_metadata(
+                route="legal_conversation",
+                mode="fallback",
+                extra={"reason": reason},
+                recent=recent,
+            ),
         )
 
     def _concurrency_response(self, state) -> AnalyzeResponse:
@@ -496,7 +540,10 @@ _GENERAL_STEPS = [
 
 
 def _fallback_content(
-    intent: LegalIntent, current: FastDemoState, known: list[str]
+    intent: LegalIntent,
+    current: FastDemoState,
+    known: list[str],
+    recent: RecentMatter = NO_MATTER,
 ) -> tuple[str, list[str], list[str]]:
     """Return (summary, clarifying_questions, next_steps) for one fallback class."""
 
@@ -513,11 +560,25 @@ def _fallback_content(
         return summary, list(_INTAKE_QUESTIONS), []
 
     if intent is LegalIntent.NEXT_STEPS:
-        summary = (
-            (acknowledged + " " if acknowledged else "")
-            + "Việc chủ nhà chưa bàn giao nhà như thỏa thuận là điều cần làm rõ sớm. "
-            "Dưới đây là những bước bạn có thể làm ngay."
+        # The handover sentence is an assertion about the user's situation, so it
+        # may only be said when something actually established it: an accepted
+        # fact, or the user's own recent description. Otherwise the answer still
+        # continues from the conversation, but claims nothing.
+        handover_known = (
+            current.facts.property_handover_status == "absent" or recent.handover_refused
         )
+        if handover_known:
+            lead = (
+                "Việc chủ nhà chưa bàn giao nhà như thỏa thuận là điều cần làm rõ sớm. "
+                "Dưới đây là những bước bạn có thể làm ngay."
+            )
+        elif recent.active:
+            lead = (
+                "Dựa trên tình huống bạn đã mô tả ở trên, đây là những bước bạn có thể làm ngay."
+            )
+        else:
+            lead = "Đây là những bước bạn có thể làm ngay."
+        summary = (acknowledged + " " if acknowledged else "") + lead
         return summary, list(_NO_HANDOVER_QUESTIONS), list(_NO_HANDOVER_STEPS)
 
     if intent is LegalIntent.EVIDENCE:
@@ -626,12 +687,19 @@ def _known_facts(state: FastDemoState) -> list[str]:
     return lines
 
 
-def _metadata(*, route: str, mode: str | None, extra: dict) -> dict:
+def _metadata(
+    *, route: str, mode: str | None, extra: dict, recent: RecentMatter = NO_MATTER
+) -> dict:
     data = {
         "fast_demo": True,
         "fast_demo_route": route,
         "fast_demo_mode": mode,
-        "used_current_chat_history": False,
+        # Truthful now that routing consults the bounded window: this was hard-
+        # coded False while history was genuinely unused.
+        "used_current_chat_history": bool(recent.considered_messages),
+        "recent_matter_active": recent.active,
+        "recent_matter_topic": recent.topic,
+        "context_window_policy": CONTEXT_WINDOW_POLICY,
     }
     data.update(extra)
     return data

@@ -259,6 +259,10 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .error-banner-mark { display: grid; flex: 0 0 19px; width: 19px; height: 19px; place-items: center; border-radius: 50%; background: #a84321; color: #ffffff; font-size: 12px; font-weight: 800; }
 .error-banner p { flex: 1; margin: 0; font-size: 13px; line-height: 1.45; }
 .error-banner button { padding: 0 2px; border: 0; background: transparent; color: #80331a; font-size: 19px; line-height: 1; }
+/* The retry control is a word, not the dismiss glyph, so it opts out of the
+   19px sizing set for that button rather than inheriting it. */
+.error-banner button.error-banner-retry { flex: 0 0 auto; padding: 3px 10px; border: 1px solid #d8ab97; border-radius: 5px; font-size: 13px; font-weight: 650; line-height: 1.4; cursor: pointer; }
+.error-banner button.error-banner-retry:hover { background: #fdece4; }
 .thinking-indicator {
   justify-self: start;
   margin: 2px 0 0;
