@@ -16,6 +16,7 @@ from ..constants import CONTRACT_VERSION
 from ..errors import (
     ChatNotFoundError,
     IdempotencyConflictError,
+    IdempotencyUnavailableError,
     InvalidRequestError,
     RequestInProgressError,
 )
@@ -51,6 +52,14 @@ class _TurnBinding:
 
     user_message_id: str
     assistant_message_id: str
+    #: Pre-minted identity for a new chat. Reserved before the row exists so the
+    #: receipt can be bound first and recovered after a crash.
+    reserved_chat_id: str = ""
+    #: The chat this turn actually resolved to, once known.
+    chat_id: str | None = None
+    #: True once the chat/user-message write has returned successfully. Until
+    #: then the turn provably persisted nothing and its claim may be released.
+    chat_write_committed: bool = False
     on_chat_bound: Callable[[str], None] | None = None
     state: AgentState | None = field(default=None, repr=False)
 
@@ -121,10 +130,17 @@ class AgentRuntime:
         binding = _TurnBinding(
             user_message_id=f"msg_user_{uuid4().hex}",
             assistant_message_id=f"msg_asst_{uuid4().hex}",
+            reserved_chat_id=f"chat_{uuid4().hex}",
         )
         client_request_id = (request.client_request_id or "").strip()
-        if self.request_receipts is None or not client_request_id:
+        if not client_request_id:
+            # Unkeyed: the caller never asked for exactly-once, so the legacy
+            # path is still the correct behaviour.
             return await self._analyze_turn(request, binding)
+        if self.request_receipts is None:
+            # Keyed requests fail closed. Running them on the legacy path would
+            # honour the key's promise in name only.
+            raise IdempotencyUnavailableError()
 
         session_id = request.session_id
         fingerprint = self._request_fingerprint(request, request.chat_id)
@@ -137,11 +153,11 @@ class AgentRuntime:
                 user_message_id=binding.user_message_id,
                 assistant_message_id=binding.assistant_message_id,
             )
-        except RequestReceiptStoreError:
-            # The receipt table is unavailable. Degrade to the legacy path rather
-            # than refusing the user's turn; the pre-existing chat-scoped dedup
-            # still applies.
-            return await self._analyze_turn(request, binding)
+        except RequestReceiptStoreError as exc:
+            # Reservation is the gate that makes the key mean anything. If it
+            # cannot be taken, nothing runs: no chat, no message, no provider
+            # call, no fact write. The raw SQLite error never reaches the user.
+            raise IdempotencyUnavailableError() from exc
 
         if not outcome.reserved:
             existing = outcome.receipt
@@ -162,11 +178,11 @@ class AgentRuntime:
         try:
             response = await self._analyze_turn(request, binding)
         except Exception:
-            # Nothing was persisted for this turn, so the reservation is dropped
-            # and the user's retry behaves like a first attempt. Once a message
-            # row exists the receipt is deliberately kept pending instead, so a
-            # retry cannot duplicate an effect whose outcome we cannot prove.
-            if binding.state is None or not binding.state.persistence.user_message_stored:
+            # Release only after *proving* the turn left nothing behind. The
+            # previous test -- "the user message was not stored" -- was not a
+            # valid boundary: the chat row could already exist, and releasing
+            # then let a retry build a second chat beside the orphan.
+            if self._turn_left_no_trace(binding):
                 self._release_receipt(session_id, client_request_id)
             raise
 
@@ -244,6 +260,36 @@ class AgentRuntime:
         except RequestReceiptStoreError:
             pass
 
+    def _turn_left_no_trace(self, binding: "_TurnBinding") -> bool:
+        """May this turn's reservation be dropped?
+
+        Only when the turn provably wrote nothing. The authority is
+        ``chat_write_committed``, set exactly when the chat/user-message write
+        returned successfully: for a new chat that write is a single
+        transaction, so a raise means both rows rolled back, and for an existing
+        chat the failed insert is one statement that never committed.
+
+        The row read-back below is a secondary confirmation only. It must not be
+        able to *block* a release, or a store that is unreadable at exactly the
+        wrong moment would strand the receipt and refuse the user's retry
+        forever.
+        """
+
+        if binding.chat_write_committed:
+            return False
+        state = binding.state
+        if state is not None and state.persistence.user_message_stored:
+            return False
+        try:
+            for chat_id in {binding.reserved_chat_id, binding.chat_id}:
+                if chat_id and self.chat_store.chat_exists(chat_id):
+                    return False
+            if self.chat_store.message_exists(binding.user_message_id):
+                return False
+        except Exception:  # noqa: BLE001 - confirmation only; the flag decides
+            pass
+        return True
+
     def _release_receipt(self, session_id: str, client_request_id: str) -> None:
         if self.request_receipts is None:
             return
@@ -284,6 +330,16 @@ class AgentRuntime:
             if not state.request.question:
                 raise InvalidRequestError("Bạn nhập nội dung tin nhắn giúp tôi nhé.")
 
+        first_user_message = ChatMessage(
+            message_id=state.persistence.user_message_id,
+            chat_id="",  # replaced once the chat identity is known
+            role="user",
+            content_type="text",
+            content_text=state.request.question,
+            content_json=None,
+            created_at=utc_now(),
+        )
+
         with self._phase(state, "resolve_or_create_chat"):
             if state.request.requested_chat_id:
                 chat = self.chat_store.get_chat_for_session(
@@ -294,30 +350,33 @@ class AgentRuntime:
                     raise ChatNotFoundError()
                 state.chat.chat_id = chat.chat_id
             else:
-                chat = self.chat_store.create_chat(
-                    state.request.session_id,
-                    self.title_service.make(state.request.question),
-                )
-                state.chat.chat_id = chat.chat_id
+                # Reserve the identity here rather than letting the store mint
+                # it, so the receipt can be bound *before* the row exists.
+                state.chat.chat_id = binding.reserved_chat_id
                 state.chat.is_new_chat = True
-            # Bind the receipt to the resolved chat before any provider work, so
-            # a retry that still cannot supply a chat_id resolves to this chat
-            # rather than creating another one.
+            # Bind the receipt to the resolved chat before any write and before
+            # any provider work, so a retry that still cannot supply a chat_id
+            # resolves to this chat rather than creating another one.
             if binding.on_chat_bound is not None:
                 binding.on_chat_bound(state.chat.chat_id)
+            binding.chat_id = state.chat.chat_id
 
         with self._phase(state, "store_user_message"):
-            self.chat_store.add_message(
-                ChatMessage(
-                    message_id=state.persistence.user_message_id,
-                    chat_id=state.chat.chat_id,
-                    role="user",
-                    content_type="text",
-                    content_text=state.request.question,
-                    content_json=None,
-                    created_at=utc_now(),
-                )
+            first_user_message = first_user_message.model_copy(
+                update={"chat_id": state.chat.chat_id}
             )
+            if state.chat.is_new_chat:
+                # One transaction: a failure can no longer leave a chat with no
+                # messages for a retry to trip over.
+                self.chat_store.create_chat_with_first_user_message(
+                    chat_id=state.chat.chat_id,
+                    session_id=state.request.session_id,
+                    title=self.title_service.make(state.request.question),
+                    message=first_user_message,
+                )
+            else:
+                self.chat_store.add_message(first_user_message)
+            binding.chat_write_committed = True
             state.persistence.user_message_stored = True
 
         with self._phase(state, "build_same_chat_context"):

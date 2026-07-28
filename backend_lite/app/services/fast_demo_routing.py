@@ -180,6 +180,16 @@ def _contains_any(text: str, cues: tuple[str, ...]) -> bool:
     return any(cue in text for cue in cues)
 
 
+def is_answer_token(text: str) -> bool:
+    """Is this message a bare answer such as 'Chưa.' / 'Không.' / 'Có.'?
+
+    Full-message anchored, so a sentence merely containing one of these words is
+    not an answer token.
+    """
+
+    return _ANSWER_TOKEN_RE.match(normalize_for_cue(text)) is not None
+
+
 def is_unsafe(text: str) -> bool:
     """Narrow harmful-intent check. Overblocking on bare keywords is a bug, not
     a safety win: 'Tôi cần giữ chứng cứ như thế nào?' must not refuse."""
@@ -363,6 +373,7 @@ __all__ = [
     "SCOPE_TEXT",
     "UNSAFE_TEXT",
     "classify_route",
+    "is_answer_token",
     "is_unsafe",
     "normalize_for_cue",
 ]

@@ -244,7 +244,13 @@ def detect_recent_matter(
 
 
 def has_pending_clarification(history_messages: list) -> bool:
-    """Did the most recent assistant turn ask a structured clarifying question?
+    """Message-level view of whether a clarifying question was just asked.
+
+    **Superseded for routing.** The orchestrator now reads
+    ``FastDemoState.pending_clarification``, because this history heuristic
+    treats *any* newer user turn as an answer -- so a greeting or a thank-you
+    silently closed the question. Retained as the message-level accessor (and
+    for callers that only have a transcript), not as the routing authority.
 
     Read from the persisted ``content_json.clarifying_questions`` field -- a
     field the backend itself produced -- never by parsing assistant prose. The

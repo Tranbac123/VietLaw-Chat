@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 STATE_SCHEMA_VERSION = "fast_demo_state_v1"
 ISSUE_TYPE_RENTAL_DEPOSIT = "rental_deposit"
@@ -116,6 +116,49 @@ class DraftRecord(BaseModel):
     body: str = ""
 
 
+#: A pending question may only ever concern an allowlisted slot, or be generic.
+#: The identity is never derived by parsing assistant prose.
+PENDING_QUESTION_GENERAL = "general"
+ALLOWED_PENDING_QUESTION_IDS: frozenset[str] = TRI_STATE_SLOTS | {
+    "deposit_amount",
+    "landlord_refusal_reason",
+    "user_goal",
+    PENDING_QUESTION_GENERAL,
+}
+
+#: Bounded so a pending record can never become a store of arbitrary prose.
+MAX_PENDING_QUESTION_TEXT = 300
+
+
+class PendingClarification(BaseModel):
+    """One outstanding structured clarifying question.
+
+    Persisted in the fast-demo state rather than re-derived from message
+    history, because the history heuristic ("any newer user turn answered it")
+    wrongly treated a greeting or a thank-you as an answer. Being state, it also
+    transitions under the same compare-and-swap as the facts it relates to.
+
+    It records only *that* a question is outstanding and which allowlisted slot
+    it concerns. It never carries a fact value: facts change exclusively through
+    the verified current-message fact-update contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    question_id: str = PENDING_QUESTION_GENERAL
+    question_text: str = Field(default="", max_length=MAX_PENDING_QUESTION_TEXT)
+    created_by_assistant_message_id: str = ""
+    created_at_state_version: int = 0
+    status: Literal["pending"] = "pending"
+
+    @field_validator("question_id")
+    @classmethod
+    def _known_question_id(cls, value: str) -> str:
+        if value not in ALLOWED_PENDING_QUESTION_IDS:
+            raise ValueError(f"unknown pending question_id: {value}")
+        return value
+
+
 class FastDemoState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -125,6 +168,9 @@ class FastDemoState(BaseModel):
     user_goal: str | None = None
     last_draft: DraftRecord | None = None
     last_response_mode: str | None = None
+    #: Outstanding structured clarification, or None. Survives social and
+    #: capability turns because those routes commit no state at all.
+    pending_clarification: PendingClarification | None = None
     # Bounded correction history. Deliberately not a normalized provenance
     # chain -- that is post-demo work.
     previous_values: dict[str, list[Any]] = Field(default_factory=dict)

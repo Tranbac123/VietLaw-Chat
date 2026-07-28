@@ -26,9 +26,12 @@ from typing import Any
 
 from ..constants import CONTRACT_VERSION, SAFETY_NOTICE
 from ..contracts.fast_demo import (
+    MAX_PENDING_QUESTION_TEXT,
+    PENDING_QUESTION_GENERAL,
     DraftRecord,
     FastDemoPlan,
     FastDemoState,
+    PendingClarification,
     RecentRequestRecord,
 )
 from ..schemas.api import AnalyzeResponse
@@ -59,6 +62,7 @@ from .fast_demo_routing import (
     LegalIntent,
     classify_legal_intent,
     classify_route,
+    is_answer_token,
     normalize_for_cue,
 )
 from .fast_demo_source_pack import FastDemoSourcePack
@@ -160,9 +164,10 @@ class FastDemoOrchestrator:
         history = getattr(state.chat, "history_messages", []) or []
         recent = detect_recent_matter(history, current_message=message)
         has_active_matter = _has_active_matter(loaded.state) or recent.active
-        # Structured signal only: whether the last assistant turn left a
-        # clarifying question outstanding. Never parsed from its prose.
-        pending_clarification = has_pending_clarification(history)
+        # Durable structured state, not a history heuristic: a greeting or a
+        # thank-you no longer counts as having answered the question.
+        pending = loaded.state.pending_clarification
+        pending_clarification = pending is not None
         route = classify_route(
             message,
             has_active_matter=has_active_matter,
@@ -208,6 +213,15 @@ class FastDemoOrchestrator:
         else:
             candidate_state, response = self._build_success(
                 state, loaded, plan, pack, message, recent
+            )
+            # Pending transitions ride the same candidate state, so they commit
+            # under the same CAS as the fact updates -- never as a second write.
+            candidate_state.pending_clarification = _next_pending_clarification(
+                current=pending,
+                plan_questions=response.clarifying_questions,
+                answered=_is_answer_turn(message, pending),
+                assistant_message_id=state.persistence.assistant_message_id,
+                state_version=loaded.state_version + 1,
             )
 
         # Step 7: short CAS transaction. The provider call is already finished.
@@ -626,6 +640,76 @@ def _acknowledgement_sentence(current: FastDemoState) -> str:
     if not parts:
         return ""
     return "Tôi đã ghi nhận " + ", ".join(parts) + "."
+
+
+# --- pending-clarification lifecycle ---------------------------------------
+#
+# Deterministic rules, evaluated in order:
+#
+#   R1 replace  a legal turn that asks a new clarifying question replaces any
+#               existing pending record (this is also how a genuinely new matter
+#               displaces an unrelated older question);
+#   R2 resolve  a legal turn whose message is a short answer token, and which
+#               was accepted, clears the pending record;
+#   R3 keep     anything else leaves it exactly as it was -- including a failed
+#               legal turn, which must never look like an answer.
+#
+# Social, capability and acknowledgment routes never reach here: they return
+# before `_commit`, so they cannot touch pending at all.
+
+# Question-text cues -> allowlisted slot. Matching is on the backend's own
+# generated question, and only ever selects an *identity*; it never reads a
+# fact value out of prose.
+_PENDING_QUESTION_CUES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("property_handover_status", ("ban giao", "nhan nha", "vao o")),
+    ("deposit_returned_status", ("hoan tra", "hoan coc", "tra lai tien coc", "tra coc")),
+    ("written_deposit_agreement_status", ("giay dat coc", "van ban", "thoa thuan bang van ban")),
+    ("payment_evidence_status", ("sao ke", "chung tu", "bien nhan", "chuyen khoan")),
+    ("rental_contract_status", ("hop dong thue",)),
+    ("written_refund_request_status", ("yeu cau hoan", "gui yeu cau")),
+    ("landlord_response_status", ("phan hoi", "chu nha da noi")),
+    ("deposit_amount", ("bao nhieu", "so tien")),
+)
+
+
+def _question_identity(question_text: str) -> str:
+    normalized = normalize_for_cue(question_text)
+    for question_id, cues in _PENDING_QUESTION_CUES:
+        if any(cue in normalized for cue in cues):
+            return question_id
+    return PENDING_QUESTION_GENERAL
+
+
+def _is_answer_turn(message: str, pending: PendingClarification | None) -> bool:
+    """Was this turn a short answer to the outstanding question?"""
+
+    return pending is not None and is_answer_token(message)
+
+
+def _next_pending_clarification(
+    *,
+    current: PendingClarification | None,
+    plan_questions: list[str],
+    answered: bool,
+    assistant_message_id: str,
+    state_version: int,
+) -> PendingClarification | None:
+    # R1: a newly asked question always wins, and replaces an older one.
+    for question in plan_questions:
+        text = (question or "").strip()
+        if not text:
+            continue
+        return PendingClarification(
+            question_id=_question_identity(text),
+            question_text=text[:MAX_PENDING_QUESTION_TEXT],
+            created_by_assistant_message_id=assistant_message_id,
+            created_at_state_version=state_version,
+        )
+    # R2: an accepted short answer closes the question it answered.
+    if answered:
+        return None
+    # R3: unchanged.
+    return current
 
 
 def _has_active_matter(state: FastDemoState) -> bool:

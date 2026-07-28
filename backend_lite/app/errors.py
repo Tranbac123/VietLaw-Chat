@@ -47,6 +47,23 @@ class RequestInProgressError(AppError):
         super().__init__("request_in_progress", message, 409)
 
 
+class IdempotencyUnavailableError(AppError):
+    """A request carrying a ``client_request_id`` asked for exactly-once
+    handling that cannot currently be guaranteed.
+
+    Falling back to the legacy path here would silently execute a keyed request
+    non-idempotently -- the caller believes a retry is safe when it is not. The
+    turn is refused instead, before any chat, message, provider call or fact
+    write, so an explicit retry stays safe.
+    """
+
+    def __init__(
+        self,
+        message: str = "Hệ thống tạm thời chưa xử lý được yêu cầu này một cách an toàn. Bạn thử lại sau giây lát nhé.",
+    ) -> None:
+        super().__init__("idempotency_unavailable", message, 503)
+
+
 class RetrievalError(AppError):
     def __init__(self, message: str = "Nguồn tham khảo tạm thời không khả dụng.") -> None:
         super().__init__("retrieval_error", message, 503)

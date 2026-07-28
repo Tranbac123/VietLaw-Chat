@@ -315,6 +315,48 @@ describe('retry stays bound to the original logical request', () => {
   });
 });
 
+describe('a controlled idempotency_unavailable rejection', () => {
+  it('follows the ordinary failure lifecycle', async () => {
+    // The backend now refuses a keyed request it cannot handle exactly-once.
+    // That must behave exactly like any other dispatched-then-failed request:
+    // no new frontend feature, no stuck composer, no duplicate message.
+    const { ApiClientError } = await import('../api/client');
+    const { analyze } = apiMocks();
+    analyze
+      .mockRejectedValueOnce(
+        new (ApiClientError as unknown as new (
+          code: string, message: string, status?: number,
+        ) => Error)(
+          'idempotency_unavailable',
+          'Hệ thống tạm thời chưa xử lý được yêu cầu này một cách an toàn. Bạn thử lại sau giây lát nhé.',
+          503,
+        ),
+      )
+      .mockResolvedValueOnce(makeAnalyzeResponse({ summary: 'Thành công sau khi thử lại.' }));
+
+    const { user } = renderApp();
+    await waitForComposerReady();
+
+    await sendViaControls(user, 'câu hỏi bị từ chối');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(screen.getByRole('alert').textContent ?? '').toMatch(/thử lại sau giây lát/i);
+
+    // Composer usable and empty; exactly one user message; no automatic retry.
+    expectComposerEmpty();
+    expect(countUserMessagesWithText('câu hỏi bị từ chối')).toBe(1);
+    await waitForComposerReady();
+    expect(composerTextarea()).not.toBeDisabled();
+    expect(analyze).toHaveBeenCalledTimes(1);
+
+    // Retry stays explicit and does not duplicate the message.
+    await user.click(screen.getByLabelText('Thử lại yêu cầu'));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    await waitForAssistantText('Thành công sau khi thử lại.');
+    expect(countUserMessagesWithText('câu hỏi bị từ chối')).toBe(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 8 / 9 / 10 / 11: regressions
 // ---------------------------------------------------------------------------

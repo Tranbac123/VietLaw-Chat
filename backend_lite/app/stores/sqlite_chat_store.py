@@ -377,6 +377,84 @@ class SQLiteChatStore:
             ).fetchone()
         return ChatRecord(**dict(row)) if row else None
 
+    def create_chat_with_first_user_message(
+        self,
+        *,
+        chat_id: str,
+        session_id: str,
+        title: str,
+        message: ChatMessage,
+    ) -> ChatRecord:
+        """Create a chat and its first user message in ONE transaction.
+
+        As two independently committed writes, a failure between them produced a
+        chat with no messages. The receipt layer then saw "no user message
+        stored", released its claim, and the retry created a *second* chat -- so
+        the orphan was not merely cosmetic.
+
+        ``chat_id`` is supplied by the caller rather than generated here, because
+        the request receipt must bind the identity *before* the write so it can
+        recover it afterwards.
+        """
+
+        self._ensure_base_schema()
+        now = utc_now()
+        content_json = (
+            json.dumps(message.content_json.model_dump(mode="json"), ensure_ascii=False)
+            if message.content_json is not None
+            else None
+        )
+        resolved_title = title or "Chat mới"
+        connection = self._connect()
+        try:
+            # One explicit transaction: either both rows land, or neither does.
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO chats(chat_id, session_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (chat_id, session_id, resolved_title, now, now),
+            )
+            connection.execute(
+                """
+                INSERT INTO messages(message_id, chat_id, role, content_type, content_text, content_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    message.message_id,
+                    chat_id,
+                    message.role,
+                    message.content_type,
+                    message.content_text,
+                    content_json,
+                    message.created_at,
+                ),
+            )
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
+        return ChatRecord(chat_id, session_id, resolved_title, now, now)
+
+    def chat_exists(self, chat_id: str) -> bool:
+        """Lets the receipt layer prove a failed start left nothing behind
+        before it releases a reservation."""
+
+        self._ensure_base_schema()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM chats WHERE chat_id = ?", (chat_id,)
+            ).fetchone()
+        return row is not None
+
+    def message_exists(self, message_id: str) -> bool:
+        self._ensure_base_schema()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM messages WHERE message_id = ?", (message_id,)
+            ).fetchone()
+        return row is not None
+
     def add_message(self, message: ChatMessage) -> None:
         self._ensure_base_schema()
         content_json = (
