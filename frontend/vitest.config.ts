@@ -7,7 +7,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
-    css: false,
+    // Must stay enabled: with `css: false` Vitest stubs stylesheet imports to
+    // an empty string, including `?raw`, which would make the typography
+    // assertions pass vacuously against no content at all.
+    css: true,
     clearMocks: true,
     restoreMocks: true,
     // The send flow waits MIN_THINKING_MS per submission and reveals with real

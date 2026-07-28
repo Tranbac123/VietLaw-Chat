@@ -269,7 +269,23 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   opacity: 0.78;
 }
 
-.structured-answer { padding: 16px; }
+/* One response type scale.
+   Sizes inside answers had drifted between 11px and 16px in a mix of px and
+   rem, and section headings (14px) had ended up smaller than body text, which
+   is what made responses look inconsistent. Everything below derives from
+   these tokens. Scoped to .structured-answer so navigation, the composer, the
+   Send button and the rest of the page chrome are untouched. */
+.structured-answer {
+  --answer-text: 16px;
+  --answer-supporting: 14px;
+  --answer-heading: 18px;
+  --answer-leading: 1.65;
+  --answer-heading-leading: 1.4;
+
+  padding: 16px;
+  font-size: var(--answer-text);
+  line-height: var(--answer-leading);
+}
 .answer-badges { display: flex; flex-wrap: wrap; gap: 7px; }
 .answer-reveal-skip {
   margin: 12px 0 -2px;
@@ -294,31 +310,79 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .decision-refuse_unsafe_request { background: #fbe7e3; color: #9d331c; }
 .decision-recommend_professional_help { background: #fff0d9; color: #835812; }
 .decision-unsupported { background: #eef0ee; color: #58665f; }
-.answer-summary { margin: 18px 0 0; color: #26372f; line-height: 1.65; white-space: pre-wrap; }
-.answer-section h3 { margin: 0; color: #26372f; font-size: 14px; font-weight: 750; }
+.answer-summary {
+  margin: 18px 0 0;
+  color: #26372f;
+  font-size: var(--answer-text);
+  line-height: var(--answer-leading);
+  white-space: pre-wrap;
+}
+.answer-section h3 {
+  margin: 0;
+  color: #26372f;
+  font-size: var(--answer-heading);
+  font-weight: 700;
+  line-height: var(--answer-heading-leading);
+}
 .typewriter-cursor { display: inline-block; margin-left: 1px; color: var(--brand); animation: typewriter-cursor-blink 850ms steps(1, end) infinite; }
 @keyframes typewriter-cursor-blink { 50% { opacity: 0; } }
 .answer-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid #e2ebe6; }
-.answer-section ul { display: grid; gap: 8px; margin: 10px 0 0; padding-left: 20px; color: #35483e; line-height: 1.55; }
-.clarification-lead { margin: 0; color: #26372f; line-height: 1.6; }
+.answer-section ul,
+.answer-section ol {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding-left: 22px;
+  color: #35483e;
+  font-size: var(--answer-text);
+  line-height: var(--answer-leading);
+}
+.clarification-lead {
+  margin: 0;
+  color: #26372f;
+  font-size: var(--answer-text);
+  line-height: var(--answer-leading);
+}
+.analysis-section p { margin: 10px 0 0; font-size: var(--answer-text); line-height: var(--answer-leading); }
 .answer-list-item--revealed { animation: answer-list-item-enter 160ms ease-out both; }
 @keyframes answer-list-item-enter { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
-.source-empty { margin: 9px 0 0; color: #63736a; line-height: 1.55; }
-.source-list { display: grid; gap: 0 !important; margin: 10px 0 0 !important; padding: 0 !important; list-style: none; }
-.source-item { padding: 13px 0; border-bottom: 1px solid #e2ebe6; }
-.source-item:last-child { padding-bottom: 0; border-bottom: 0; }
-.source-heading-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.source-title, .source-name, .source-snippet { margin: 0; overflow-wrap: anywhere; }
-.source-title { color: #244c3b; font-size: 13px; font-weight: 750; }
-.source-name { margin-top: 3px; color: #64746c; font-size: 12px; }
-.source-type { flex: 0 0 auto; padding: 3px 6px; border: 1px solid #c9ded3; border-radius: 5px; color: #356550; font-size: 11px; }
-.source-snippet { margin-top: 9px; color: #3c4c44; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
-.source-footer { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 9px; color: #718078; font-size: 11px; }
-.source-footer a { overflow-wrap: anywhere; color: #0f7256; font-weight: 700; text-decoration: none; }
-.source-footer a:hover { text-decoration: underline; }
+/* Compact source reference. Collapsed it is a single "Nguồn tham khảo"
+   control at supporting size; the previous title/publisher/badge/snippet/date
+   cards are gone. */
+.source-cta { margin: 16px 0 0; font-size: var(--answer-supporting); line-height: 1.5; }
+.source-cta-link,
+.source-cta-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #0f7256;
+  font-size: var(--answer-supporting);
+  font-weight: 650;
+  text-decoration: none;
+  cursor: pointer;
+}
+.source-cta-link:hover,
+.source-cta-toggle:hover { text-decoration: underline; }
+.source-cta-link:focus-visible,
+.source-cta-toggle:focus-visible,
+.source-cta-list a:focus-visible {
+  outline: 2px solid #0f7256;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+.source-cta-caret { display: inline-block; margin-right: 5px; }
+.source-cta-list {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: var(--answer-supporting);
+}
+.source-cta-list a { overflow-wrap: anywhere; color: #0f7256; text-decoration: none; }
+.source-cta-list a:hover { text-decoration: underline; }
 .safety-notice { margin-top: 18px; padding: 13px; border-left: 3px solid #c8922c; background: #fffaf0; color: #684d18; }
 .safety-notice h3 { color: #684d18; }
-.safety-notice p { margin: 7px 0 0; font-size: 13px; line-height: 1.6; }
+.safety-notice p { margin: 7px 0 0; font-size: var(--answer-supporting); line-height: var(--answer-leading); }
 
 @media (max-width: 760px) {
   body { overflow: hidden; }
@@ -393,7 +457,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   color: inherit;
   border-radius: 999px;
   padding: 0.25rem 0.8rem;
-  font-size: 0.82rem;
+  font-size: var(--answer-supporting);
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease;
 }
@@ -404,7 +468,8 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   margin: 0.6rem 0 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  line-height: 1.7;
+  font-size: var(--answer-text);
+  line-height: var(--answer-leading);
 }
 
 .known-facts-toggle {
@@ -412,7 +477,7 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   background: transparent;
   color: inherit;
   opacity: 0.75;
-  font-size: 0.86rem;
+  font-size: var(--answer-supporting);
   padding: 0;
   cursor: pointer;
 }
@@ -422,15 +487,15 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
 .known-facts-list {
   margin: 0.45rem 0 0;
   padding-left: 1.35rem;
-  font-size: 0.9rem;
+  font-size: var(--answer-supporting);
   opacity: 0.9;
 }
 
 .uncertainty-notice {
   margin-top: 0.9rem;
-  font-size: 0.88rem;
+  font-size: var(--answer-supporting);
   opacity: 0.8;
-  line-height: 1.6;
+  line-height: var(--answer-leading);
 }
 
 /* Wide content must scroll inside its own box, never the page body. */

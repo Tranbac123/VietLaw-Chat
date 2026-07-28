@@ -6,6 +6,7 @@ import {
   segmentGraphemes,
 } from '../lib/animation';
 import { formatDomain } from '../lib/format';
+import { stripRedundantOrdinal } from '../lib/listText';
 import { DecisionBadge } from './DecisionBadge';
 import { RiskBadge } from './RiskBadge';
 import { SourcePanel } from './SourcePanel';
@@ -355,7 +356,10 @@ export function StructuredAnswer({
         visibleCount={revealState.clarifyingCount}
         animateItems={animateItems}
       />
-      {revealState.showSources && visibleSources.length > 0 && <SourcePanel sources={visibleSources} />}
+      {/* Visibility is decided by the validated collection inside SourcePanel,
+          not by the raw array length: a response whose URLs are all unsafe
+          must render no source UI at all. */}
+      {revealState.showSources && <SourcePanel sources={visibleSources} />}
     </div>
   );
 }
@@ -452,7 +456,7 @@ function FastDemoAnswer({ content, visibleSummary, isRevealing, showCursor, onSk
           <p className="clarification-lead">Để tôi hỗ trợ chính xác hơn, bạn cho tôi biết thêm:</p>
           <ol className="clarification-list">
             {content.clarifying_questions.map((item, index) => (
-              <li key={`q-${index}`}>{item}</li>
+              <li key={`q-${index}`}>{stripRedundantOrdinal(item, index)}</li>
             ))}
           </ol>
         </section>
@@ -471,7 +475,9 @@ function FastDemoAnswer({ content, visibleSummary, isRevealing, showCursor, onSk
         <section className="answer-section next-steps-section">
           <h3>Bước tiếp theo</h3>
           <ol>
-            {content.next_steps.map((item, index) => <li key={`n-${index}`}>{item}</li>)}
+            {content.next_steps.map((item, index) => (
+              <li key={`n-${index}`}>{stripRedundantOrdinal(item, index)}</li>
+            ))}
           </ol>
         </section>
       )}
@@ -486,8 +492,9 @@ function FastDemoAnswer({ content, visibleSummary, isRevealing, showCursor, onSk
         <p className="uncertainty-notice">{content.uncertainty_notice}</p>
       )}
 
-      {/* No sources selected -> no panel at all, never empty-source boilerplate. */}
-      {sources.length > 0 && <SourcePanel sources={sources} />}
+      {/* No valid sources -> no panel at all, never empty-source boilerplate.
+          SourcePanel validates, so an array of unsafe URLs also renders nothing. */}
+      <SourcePanel sources={sources} />
     </div>
   );
 }
