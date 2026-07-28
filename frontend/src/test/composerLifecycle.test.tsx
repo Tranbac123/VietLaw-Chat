@@ -258,6 +258,63 @@ describe('a request that fails after dispatch', () => {
   });
 });
 
+describe('retry stays bound to the original logical request', () => {
+  it('replays a new-chat failure without naming any chat', async () => {
+    // The first attempt failed, so the client never learned a chat id. The
+    // retry must not invent one: the backend receipt resolves it.
+    const { analyze } = apiMocks();
+    analyze
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(makeAnalyzeResponse({ chat_id: 'chat-server', summary: 'Xong.' }));
+
+    const { user } = renderApp();
+    await waitForComposerReady();
+
+    await sendViaControls(user, 'câu hỏi chat mới');
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(analyze.mock.calls[0][0].chat_id).toBeUndefined();
+
+    await user.click(screen.getByLabelText('Thử lại yêu cầu'));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+
+    const retryPayload = analyze.mock.calls[1][0];
+    expect(retryPayload.chat_id).toBeUndefined();
+    expect(retryPayload.client_request_id).toBe(analyze.mock.calls[0][0].client_request_id);
+
+    await waitForAssistantText('Xong.');
+    expect(countUserMessagesWithText('câu hỏi chat mới')).toBe(1);
+  });
+
+  it('replays an existing-chat failure against that same chat', async () => {
+    const { analyze, listChats, getChat } = apiMocks();
+    listChats.mockResolvedValue(makeChatList(['chat-a']));
+    getChat.mockResolvedValue(
+      makeChatDetail('chat-a', [makeUserMessage('chat-a', 'm1', 'Tin nhắn cũ')]),
+    );
+    analyze
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(makeAnalyzeResponse({ chat_id: 'chat-a', summary: 'Xong A.' }));
+
+    const { user } = renderApp();
+    await screen.findByRole('button', { name: /Tiêu đề chat-a/ });
+    await user.click(screen.getByRole('button', { name: /Tiêu đề chat-a/ }));
+    await waitFor(() => expect(getChat).toHaveBeenCalled());
+    await waitForComposerReady();
+
+    await sendViaControls(user, 'câu hỏi chat A');
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
+    expect(analyze.mock.calls[0][0]).toMatchObject({ chat_id: 'chat-a' });
+
+    await user.click(screen.getByLabelText('Thử lại yêu cầu'));
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+
+    // The retry is pinned to the chat it was dispatched against.
+    expect(analyze.mock.calls[1][0]).toMatchObject({ chat_id: 'chat-a' });
+    await waitForAssistantText('Xong A.');
+    expect(countUserMessagesWithText('câu hỏi chat A')).toBe(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 8 / 9 / 10 / 11: regressions
 // ---------------------------------------------------------------------------

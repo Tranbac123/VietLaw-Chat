@@ -47,8 +47,90 @@ RECENT_CONTEXT_CHAR_BUDGET = 4000
 #: Human-readable description of the bound, surfaced in response metadata.
 CONTEXT_WINDOW_POLICY = (
     f"last {RECENT_CONTEXT_MESSAGE_LIMIT} same-chat messages, user turns only, "
-    f"max {RECENT_CONTEXT_CHAR_BUDGET} chars"
+    f"hard cap {RECENT_CONTEXT_CHAR_BUDGET} chars (head-truncated at the boundary)"
 )
+
+
+@dataclass(frozen=True)
+class RecentContext:
+    """The bounded supporting context actually passed onward.
+
+    ``text`` is guaranteed to satisfy ``len(text) <= RECENT_CONTEXT_CHAR_BUDGET``.
+    Nothing downstream may read history other than through this value.
+    """
+
+    text: str
+    #: The accepted (possibly head-truncated) user turns, oldest first. Cue
+    #: detection walks these rather than ``text`` so a match can never span a
+    #: message boundary that the joiner happens to create.
+    messages: tuple[str, ...]
+    messages_considered: int
+    truncated: bool
+
+
+EMPTY_CONTEXT = RecentContext(text="", messages=(), messages_considered=0, truncated=False)
+
+#: Separator between accepted messages in the assembled context string. Counted
+#: against the budget so the final string can never exceed it.
+_JOINER = "\n"
+
+
+def build_recent_context(history_messages: list) -> RecentContext:
+    """Assemble the bounded same-chat context under a strict character cap.
+
+    Deterministic rule:
+
+    1. take at most the last ``RECENT_CONTEXT_MESSAGE_LIMIT`` messages;
+    2. walk them newest-first, keeping only ``role == "user"`` turns;
+    3. include a whole message while the remaining budget allows it;
+    4. at the boundary, include only the message's leading
+       ``remaining`` characters -- a *head* truncation, so the cap is observable
+       from the front of the text and a cue sitting past the budget genuinely
+       falls outside it;
+    5. stop once the budget is exhausted;
+    6. reverse the accepted messages so the caller consumes them chronologically.
+
+    The joiner is charged to the budget too, so the returned string satisfies
+    ``len(text) <= RECENT_CONTEXT_CHAR_BUDGET`` exactly, not approximately.
+    """
+
+    if not history_messages:
+        return EMPTY_CONTEXT
+
+    remaining = RECENT_CONTEXT_CHAR_BUDGET
+    accepted: list[str] = []
+    considered = 0
+    truncated = False
+
+    for message in reversed(history_messages[-RECENT_CONTEXT_MESSAGE_LIMIT:]):
+        if remaining <= 0:
+            break
+        if getattr(message, "role", None) != "user":
+            continue
+        text = getattr(message, "content_text", None)
+        if not text:
+            continue
+        considered += 1
+        # Every message after the first costs a joiner as well.
+        cost = len(text) + (len(_JOINER) if accepted else 0)
+        if cost <= remaining:
+            accepted.append(text)
+            remaining -= cost
+            continue
+        allowance = remaining - (len(_JOINER) if accepted else 0)
+        if allowance > 0:
+            accepted.append(text[:allowance])
+            truncated = True
+        remaining = 0
+        break
+
+    accepted.reverse()
+    return RecentContext(
+        text=_JOINER.join(accepted),
+        messages=tuple(accepted),
+        messages_considered=considered,
+        truncated=truncated,
+    )
 
 # A rental-deposit matter is "present in this chat" when a user turn mentioned
 # it. Kept deliberately close to the router's deposit vocabulary so routing and
@@ -116,8 +198,6 @@ def detect_recent_matter(
     was actually read.
     """
 
-    budget = RECENT_CONTEXT_CHAR_BUDGET
-    considered = 0
     topic: str | None = None
     active = False
 
@@ -137,17 +217,13 @@ def detect_recent_matter(
             active=True, topic=topic or TOPIC_DEPOSIT_GENERAL, considered_messages=0
         )
 
-    # Newest first: the most recent statement of the issue wins.
-    for message in reversed(history_messages[-RECENT_CONTEXT_MESSAGE_LIMIT:]):
-        if budget <= 0:
-            break
-        if getattr(message, "role", None) != "user":
-            continue
-        text = getattr(message, "content_text", None)
-        if not text:
-            continue
-        budget -= len(text)
-        considered += 1
+    # Detection reads ONLY the capped context string. Scanning the raw messages
+    # here is what made the declared cap advisory: a cue sitting past the budget
+    # inside one oversized message was still found.
+    context = build_recent_context(history_messages)
+    considered = context.messages_considered
+    # Newest first among the accepted turns: the most recent statement wins.
+    for text in reversed(context.messages):
         normalized = normalize_for_cue(text)
         if not _contains_any(normalized, _MATTER_CUES):
             continue
@@ -167,8 +243,42 @@ def detect_recent_matter(
     )
 
 
+def has_pending_clarification(history_messages: list) -> bool:
+    """Did the most recent assistant turn ask a structured clarifying question?
+
+    Read from the persisted ``content_json.clarifying_questions`` field -- a
+    field the backend itself produced -- never by parsing assistant prose. The
+    signal says only *that* a question is outstanding; it never supplies the
+    value of any user fact, which remains the exclusive job of the verified
+    current-message fact-update contract.
+
+    Only the latest assistant turn counts: once the user has replied to it with
+    real content, a later bare token is no longer answering it.
+    """
+
+    for message in reversed(history_messages or []):
+        role = getattr(message, "role", None)
+        if role == "user":
+            # A user turn newer than the question means it was already answered.
+            return False
+        if role != "assistant":
+            continue
+        content = getattr(message, "content_json", None)
+        if content is None:
+            return False
+        questions = getattr(content, "clarifying_questions", None)
+        if questions is None and isinstance(content, dict):
+            questions = content.get("clarifying_questions")
+        return bool(questions)
+    return False
+
+
 __all__ = [
     "CONTEXT_WINDOW_POLICY",
+    "EMPTY_CONTEXT",
+    "RecentContext",
+    "build_recent_context",
+    "has_pending_clarification",
     "NO_MATTER",
     "RECENT_CONTEXT_CHAR_BUDGET",
     "RECENT_CONTEXT_MESSAGE_LIMIT",

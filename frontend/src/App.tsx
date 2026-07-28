@@ -83,6 +83,15 @@ interface Resubmission {
   clientRequestId: string;
   userType: UserType;
   temporaryUserMessageId: string;
+  /**
+   * The chat this request was dispatched against, captured at dispatch time.
+   * `null` means it was a new-chat request. Retry replays this value rather than
+   * whatever chat is selected now, so a retry can never be written into a
+   * different chat. For the `null` case the backend request receipt is
+   * authoritative: it resolves the retry to the chat the first attempt created,
+   * which the client may never have learned.
+   */
+  chatId: string | null;
 }
 
 function newClientRequestId(): string {
@@ -160,6 +169,9 @@ export function App() {
     // transcript is replaced rather than duplicated.
     const clientRequestId = resubmission?.clientRequestId ?? newClientRequestId();
     const requestedUserType = resubmission?.userType ?? selectedUserType;
+    // A retry stays bound to the chat it was originally dispatched against;
+    // only a fresh submission follows the currently selected chat.
+    const targetChatId = resubmission ? resubmission.chatId : activeChatId;
     if (assistantResponsePhase !== 'idle' || loadingChat) return false;
 
     const generation = responseGenerationRef.current + 1;
@@ -180,7 +192,7 @@ export function App() {
     activeResponseFlowRef.current = { generation, temporaryUserMessageId, cancel: cancelFlow };
     const optimisticUserMessage: ChatMessage = {
       message_id: temporaryUserMessageId,
-      chat_id: activeChatId ?? `temporary-chat-${generation}`,
+      chat_id: targetChatId ?? `temporary-chat-${generation}`,
       role: 'user',
       content_type: 'text',
       content_text: question,
@@ -208,7 +220,7 @@ export function App() {
       const result = await Promise.race<AnalyzeRaceResult>([
         analyze({
           session_id: sessionId,
-          ...(activeChatId ? { chat_id: activeChatId } : {}),
+          ...(targetChatId ? { chat_id: targetChatId } : {}),
           question,
           user_type: requestedUserType,
           language: 'vi',
@@ -269,6 +281,7 @@ export function App() {
         clientRequestId,
         userType: requestedUserType,
         temporaryUserMessageId,
+        chatId: targetChatId,
       });
       setAssistantResponsePhase('idle');
       return false;

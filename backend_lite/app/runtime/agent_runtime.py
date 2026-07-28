@@ -8,9 +8,19 @@ from uuid import uuid4
 if TYPE_CHECKING:
     from ..services.demo_llm_generation import DemoOrchestrator
 
+from dataclasses import dataclass, field
+from typing import Callable
+
+from ..application.fingerprint import fingerprint_request
 from ..constants import CONTRACT_VERSION
-from ..errors import ChatNotFoundError, InvalidRequestError
+from ..errors import (
+    ChatNotFoundError,
+    IdempotencyConflictError,
+    InvalidRequestError,
+    RequestInProgressError,
+)
 from ..schemas.api import AnalyzeRequest, AnalyzeResponse
+from ..stores.fast_demo_request_receipts import RequestReceiptStoreError
 from ..schemas.chat import ChatMessage
 from ..schemas.content import AnalyzeContent
 from ..services.input_normalizer import InputNormalizer
@@ -33,6 +43,18 @@ from .protocols import (
 )
 
 
+@dataclass
+class _TurnBinding:
+    """Identities reserved for one logical turn, plus the hooks the receipt
+    layer uses to observe it. Kept out of ``AgentState`` so the exactly-once
+    concern does not leak into the analysis contract."""
+
+    user_message_id: str
+    assistant_message_id: str
+    on_chat_bound: Callable[[str], None] | None = None
+    state: AgentState | None = field(default=None, repr=False)
+
+
 class AgentRuntime:
     def __init__(
         self,
@@ -52,6 +74,7 @@ class AgentRuntime:
         title_service: TitleService,
         demo_orchestrator: "DemoOrchestrator | None" = None,
         fast_demo_orchestrator=None,
+        request_receipts=None,
     ) -> None:
         self.chat_store = chat_store
         self.context_builder = context_builder
@@ -69,6 +92,8 @@ class AgentRuntime:
         self.title_service = title_service
         self.demo_orchestrator = demo_orchestrator
         self.fast_demo_orchestrator = fast_demo_orchestrator
+        # Optional: when absent, analyze() keeps its exact legacy behaviour.
+        self.request_receipts = request_receipts
 
     @contextmanager
     def _phase(self, state: AgentState, name: str):
@@ -84,6 +109,154 @@ class AgentRuntime:
             state.trace.elapsed_ms[name] = round((perf_counter() - started) * 1000, 3)
 
     async def analyze(self, request: AnalyzeRequest) -> AnalyzeResponse:
+        """Exactly-once entry point.
+
+        When a ``client_request_id`` is supplied and a receipt store is wired,
+        one logical turn is claimed *before* any chat or message row is written,
+        so a replay can never add a second user/assistant pair, a second chat, a
+        second provider call or a second fact application. Without either of
+        those the behaviour is exactly the legacy path.
+        """
+
+        binding = _TurnBinding(
+            user_message_id=f"msg_user_{uuid4().hex}",
+            assistant_message_id=f"msg_asst_{uuid4().hex}",
+        )
+        client_request_id = (request.client_request_id or "").strip()
+        if self.request_receipts is None or not client_request_id:
+            return await self._analyze_turn(request, binding)
+
+        session_id = request.session_id
+        fingerprint = self._request_fingerprint(request, request.chat_id)
+
+        try:
+            outcome = self.request_receipts.reserve(
+                session_id=session_id,
+                client_request_id=client_request_id,
+                request_fingerprint=fingerprint,
+                user_message_id=binding.user_message_id,
+                assistant_message_id=binding.assistant_message_id,
+            )
+        except RequestReceiptStoreError:
+            # The receipt table is unavailable. Degrade to the legacy path rather
+            # than refusing the user's turn; the pre-existing chat-scoped dedup
+            # still applies.
+            return await self._analyze_turn(request, binding)
+
+        if not outcome.reserved:
+            existing = outcome.receipt
+            # A reused key with a different request must never replay an
+            # unrelated answer, and must not run: zero writes, zero provider.
+            if not self._fingerprint_compatible(request, existing):
+                raise IdempotencyConflictError()
+            if existing.is_complete:
+                return self._replayed_response(existing.response)
+            # Still pending: another attempt owns this turn. Starting a second
+            # provider call could duplicate its effects, so refuse in a
+            # controlled way and leave the receipt for explicit review.
+            raise RequestInProgressError()
+
+        binding.on_chat_bound = lambda chat_id: self._bind_receipt_chat(
+            session_id, client_request_id, chat_id
+        )
+        try:
+            response = await self._analyze_turn(request, binding)
+        except Exception:
+            # Nothing was persisted for this turn, so the reservation is dropped
+            # and the user's retry behaves like a first attempt. Once a message
+            # row exists the receipt is deliberately kept pending instead, so a
+            # retry cannot duplicate an effect whose outcome we cannot prove.
+            if binding.state is None or not binding.state.persistence.user_message_stored:
+                self._release_receipt(session_id, client_request_id)
+            raise
+
+        try:
+            self.request_receipts.complete(
+                session_id=session_id,
+                client_request_id=client_request_id,
+                response=response.model_dump(mode="json"),
+            )
+        except RequestReceiptStoreError:
+            # The turn itself succeeded and is already persisted; failing to
+            # record the snapshot must not turn that into an error for the user.
+            pass
+        return response
+
+    @staticmethod
+    def _replayed_response(payload: dict) -> AnalyzeResponse:
+        """Return the stored turn verbatim, flagged as a replay.
+
+        Every content field and every stable id -- chat, user message, assistant
+        message -- is the original. The only difference is the additive
+        ``fast_demo_replay`` marker, which is the repository's existing
+        convention for "this answer was not recomputed".
+        """
+
+        data = dict(payload)
+        metadata = dict(data.get("metadata") or {})
+        metadata["fast_demo_replay"] = True
+        data["metadata"] = metadata
+        return AnalyzeResponse.model_validate(data)
+
+    @staticmethod
+    def _request_fingerprint(request: AnalyzeRequest, chat_id: str | None) -> str:
+        return fingerprint_request(
+            {
+                "chat_id": chat_id,
+                "contract_version": CONTRACT_VERSION,
+                "language": request.language,
+                "question": request.question,
+                "session_id": request.session_id,
+                "user_type": request.user_type,
+            }
+        )
+
+    def _fingerprint_compatible(self, request: AnalyzeRequest, receipt) -> bool:
+        """Is this request the same logical turn as the stored receipt?
+
+        The fingerprint covers the requested chat identity, but a retry is
+        allowed to name the chat the first attempt created: the client learns
+        ``chat_id`` from the response it is retrying, so an existing-chat replay
+        legitimately arrives with a ``chat_id`` the original request did not
+        carry. Both spellings are accepted, but only while they refer to the
+        chat this receipt is already bound to -- pointing the same key at a
+        *different* chat stays a conflict.
+        """
+
+        requested = request.chat_id
+        candidates: set[str | None] = {requested}
+        if requested is None or requested == receipt.chat_id:
+            candidates.add(None)
+            if receipt.chat_id is not None:
+                candidates.add(receipt.chat_id)
+        return any(
+            self._request_fingerprint(request, candidate) == receipt.request_fingerprint
+            for candidate in candidates
+        )
+
+    def _bind_receipt_chat(self, session_id: str, client_request_id: str, chat_id: str) -> None:
+        if self.request_receipts is None:
+            return
+        try:
+            self.request_receipts.bind_chat(
+                session_id=session_id, client_request_id=client_request_id, chat_id=chat_id
+            )
+        except RequestReceiptStoreError:
+            pass
+
+    def _release_receipt(self, session_id: str, client_request_id: str) -> None:
+        if self.request_receipts is None:
+            return
+        try:
+            self.request_receipts.release(
+                session_id=session_id, client_request_id=client_request_id
+            )
+        except RequestReceiptStoreError:
+            pass
+
+    async def _analyze_turn(
+        self, request: AnalyzeRequest, binding: "_TurnBinding"
+    ) -> AnalyzeResponse:
         state = AgentState(
             request=RequestState(
                 request_id=f"req_{uuid4().hex}",
@@ -96,8 +269,12 @@ class AgentRuntime:
                 client_request_id=request.client_request_id,
             )
         )
-        state.persistence.user_message_id = f"msg_user_{uuid4().hex}"
-        state.persistence.assistant_message_id = f"msg_asst_{uuid4().hex}"
+        # Reserved by the caller so the persisted rows carry exactly the ids the
+        # request receipt already recorded; a replay therefore returns the same
+        # user_message_id / assistant_message_id it returned the first time.
+        binding.state = state
+        state.persistence.user_message_id = binding.user_message_id
+        state.persistence.assistant_message_id = binding.assistant_message_id
 
         with self._phase(state, "validate_request"):
             state.request.question = state.request.question.strip()
@@ -123,6 +300,11 @@ class AgentRuntime:
                 )
                 state.chat.chat_id = chat.chat_id
                 state.chat.is_new_chat = True
+            # Bind the receipt to the resolved chat before any provider work, so
+            # a retry that still cannot supply a chat_id resolves to this chat
+            # rather than creating another one.
+            if binding.on_chat_bound is not None:
+                binding.on_chat_bound(state.chat.chat_id)
 
         with self._phase(state, "store_user_message"):
             self.chat_store.add_message(

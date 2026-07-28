@@ -102,6 +102,25 @@ _ACKNOWLEDGMENT_RE = re.compile(
     + _TAIL + r"$"
 )
 
+# Short tokens that are *answers* when a structured clarification is pending, or
+# when a legal matter is already active. "Chưa." replying to "Bạn đã được bàn
+# giao nhà chưa?" carries real meaning; consuming it as small talk throws the
+# user's answer away. These never establish a fact themselves -- they only route
+# the turn into legal processing, where the existing verified current-message
+# fact-update contract decides what (if anything) is recorded.
+#
+# `cảm ơn`/`thanks` and `ok` are deliberately NOT here: gratitude and a bare
+# "ok" are not answers to a yes/no question, so they stay social.
+_ANSWER_TOKEN_RE = re.compile(
+    r"^(?:"
+    r"chua|chua co|chua a|chua ah|van chua|chua he"
+    r"|khong|khong co|khong a|khong ah|khong phai|chua phai"
+    r"|co|co a|co ah|co roi|roi|da roi|dung|dung roi|dung vay|phai"
+    r"|duoc|duoc roi|vang|da|u|um|uh"
+    r")"
+    + _TAIL + r"$"
+)
+
 # Bounded harmful-intent cues. Deliberately NARROW: a lawful request that merely
 # mentions công an / chứng cứ / đe dọa / luật sư is not unsafe. Only the
 # combination of a harmful verb with its object refuses.
@@ -169,8 +188,26 @@ def is_unsafe(text: str) -> bool:
     return any(pattern.search(normalized) is not None for pattern in _UNSAFE_PATTERNS)
 
 
-def classify_route(text: str, *, has_active_matter: bool) -> FastDemoRoute:
-    """Deterministic first-level route. No provider call, no state mutation."""
+def classify_route(
+    text: str,
+    *,
+    has_active_matter: bool,
+    pending_clarification: bool = False,
+) -> FastDemoRoute:
+    """Deterministic first-level route. No provider call, no state mutation.
+
+    Precedence, highest first:
+
+      1. safety;
+      2. explicit legal/current-turn intent (deposit cues, below);
+      3. a short answer to a pending structured legal clarification;
+      4. capability / greeting;
+      5. pure acknowledgment;
+      6. remaining legal / scope handling.
+
+    ``pending_clarification`` must come from a structured persisted assistant
+    field, never from parsing assistant prose.
+    """
 
     normalized = normalize_for_cue(text)
     if not normalized:
@@ -179,6 +216,13 @@ def classify_route(text: str, *, has_active_matter: bool) -> FastDemoRoute:
     # Safety first, before any social short-circuit.
     if is_unsafe(text):
         return FastDemoRoute.UNSAFE
+
+    # A short token that answers an outstanding question, or that lands in a
+    # chat with a live matter, is treated as legal content rather than small
+    # talk. Ranked above the greeting/acknowledgment anchors so "Chưa." cannot
+    # be consumed as a pleasantry -- but still below safety.
+    if (pending_clarification or has_active_matter) and _ANSWER_TOKEN_RE.match(normalized):
+        return FastDemoRoute.LEGAL_CONVERSATION
 
     # Full-message anchors: a greeting carrying actionable content is not social.
     if _SOCIAL_RE.match(normalized):

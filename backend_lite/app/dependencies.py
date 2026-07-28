@@ -172,6 +172,28 @@ def _build_demo_orchestrator(snippet_store: JsonSnippetStore):
     )
 
 
+def _build_request_receipts(settings: Settings):
+    """Session-scoped exactly-once receipts.
+
+    Always wired: idempotency must not depend on a demo feature flag, and a
+    request without ``client_request_id`` still takes the legacy path. A store
+    that cannot create its table degrades to ``None`` rather than blocking
+    startup.
+    """
+
+    from .stores.fast_demo_request_receipts import (
+        FastDemoRequestReceiptStore,
+        RequestReceiptStoreError,
+    )
+
+    store = FastDemoRequestReceiptStore(settings.chat_db_path)
+    try:
+        store.ensure_schema()
+    except RequestReceiptStoreError:  # noqa: BLE001 - degrade, never crash startup
+        return None
+    return store
+
+
 def build_container(settings: Settings) -> AppContainer:
     chat_store = SQLiteChatStore(settings.chat_db_path)
     snippet_store = JsonSnippetStore(settings.legal_snippets_path)
@@ -179,6 +201,7 @@ def build_container(settings: Settings) -> AppContainer:
     normalizer = InputNormalizer()
     demo_orchestrator = _build_demo_orchestrator(snippet_store)
     fast_demo_orchestrator = _build_fast_demo_orchestrator(settings, snippet_store)
+    request_receipts = _build_request_receipts(settings)
     runtime = AgentRuntime(
         chat_store=chat_store,
         context_builder=SameChatContextBuilder(chat_store, normalizer, settings.context_message_limit),
@@ -196,6 +219,7 @@ def build_container(settings: Settings) -> AppContainer:
         title_service=ChatTitleService(),
         demo_orchestrator=demo_orchestrator,
         fast_demo_orchestrator=fast_demo_orchestrator,
+        request_receipts=request_receipts,
     )
     return AppContainer(settings, chat_store, snippet_store, unsafe_store, runtime)
 

@@ -43,6 +43,7 @@ from .conversation_context import (
     NO_MATTER,
     RecentMatter,
     detect_recent_matter,
+    has_pending_clarification,
 )
 from .demo_llm_client import LLMClientError, LLMClientProtocol
 from .fast_demo_fact_validation import apply_fact_updates, is_reserved_sentinel
@@ -156,11 +157,17 @@ class FastDemoOrchestrator:
         # unavailable, or no verifiable span) answered a legitimate follow-up
         # with a scope refusal, asking the user to restate what they had just
         # explained. The window is bounded and same-chat only.
-        recent = detect_recent_matter(
-            getattr(state.chat, "history_messages", []) or [], current_message=message
-        )
+        history = getattr(state.chat, "history_messages", []) or []
+        recent = detect_recent_matter(history, current_message=message)
         has_active_matter = _has_active_matter(loaded.state) or recent.active
-        route = classify_route(message, has_active_matter=has_active_matter)
+        # Structured signal only: whether the last assistant turn left a
+        # clarifying question outstanding. Never parsed from its prose.
+        pending_clarification = has_pending_clarification(history)
+        route = classify_route(
+            message,
+            has_active_matter=has_active_matter,
+            pending_clarification=pending_clarification,
+        )
 
         if route is FastDemoRoute.SOCIAL:
             # A greeting mid-conversation is answered, but it neither clears the
