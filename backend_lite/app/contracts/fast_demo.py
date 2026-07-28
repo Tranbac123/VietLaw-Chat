@@ -128,6 +128,29 @@ ALLOWED_PENDING_QUESTION_IDS: frozenset[str] = TRI_STATE_SLOTS | {
 
 #: Bounded so a pending record can never become a store of arbitrary prose.
 MAX_PENDING_QUESTION_TEXT = 300
+#: Assistant message ids are repository-generated (`msg_asst_<32 hex>`); the cap
+#: is generous but finite so the field cannot become free text.
+MAX_PENDING_MESSAGE_ID = 128
+
+#: Which accepted fact slot answers which pending question. A slot-backed
+#: question resolves ONLY when its expected slot was actually applied, so a
+#: rejected update (unverifiable evidence, bad value, wrong slot, CAS conflict)
+#: leaves the question outstanding instead of silently closing it.
+#:
+#: `general` is deliberately absent: there is no slot that proves a general
+#: question was answered, so it is preserved rather than guessed.
+PENDING_QUESTION_EXPECTED_SLOT: dict[str, str] = {
+    "written_deposit_agreement_status": "written_deposit_agreement_status",
+    "payment_evidence_status": "payment_evidence_status",
+    "rental_contract_status": "rental_contract_status",
+    "property_handover_status": "property_handover_status",
+    "deposit_returned_status": "deposit_returned_status",
+    "written_refund_request_status": "written_refund_request_status",
+    "landlord_response_status": "landlord_response_status",
+    "deposit_amount": "deposit_amount",
+    "landlord_refusal_reason": "landlord_refusal_reason",
+    "user_goal": "user_goal",
+}
 
 
 class PendingClarification(BaseModel):
@@ -147,8 +170,12 @@ class PendingClarification(BaseModel):
 
     question_id: str = PENDING_QUESTION_GENERAL
     question_text: str = Field(default="", max_length=MAX_PENDING_QUESTION_TEXT)
-    created_by_assistant_message_id: str = ""
-    created_at_state_version: int = 0
+    #: Must name a real assistant turn: a pending record with no provenance
+    #: could never be audited back to the question that created it.
+    created_by_assistant_message_id: str = Field(
+        min_length=1, max_length=MAX_PENDING_MESSAGE_ID
+    )
+    created_at_state_version: int = Field(ge=0)
     status: Literal["pending"] = "pending"
 
     @field_validator("question_id")
@@ -157,6 +184,21 @@ class PendingClarification(BaseModel):
         if value not in ALLOWED_PENDING_QUESTION_IDS:
             raise ValueError(f"unknown pending question_id: {value}")
         return value
+
+    @field_validator("created_by_assistant_message_id")
+    @classmethod
+    def _message_id_shape(cls, value: str) -> str:
+        # Same shape the runtime mints. Keeps model- or user-supplied strings
+        # from becoming state authority.
+        if not value.startswith("msg_asst_"):
+            raise ValueError("created_by_assistant_message_id must be an assistant message id")
+        return value
+
+    @property
+    def expected_slot(self) -> str | None:
+        """The fact slot whose acceptance proves this question was answered."""
+
+        return PENDING_QUESTION_EXPECTED_SLOT.get(self.question_id)
 
 
 class FastDemoState(BaseModel):

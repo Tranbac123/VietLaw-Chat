@@ -22,6 +22,7 @@ from ..errors import (
 )
 from ..schemas.api import AnalyzeRequest, AnalyzeResponse
 from ..stores.fast_demo_request_receipts import RequestReceiptStoreError
+from ..stores.sqlite_chat_store import ChatStartNotCommittedError
 from ..schemas.chat import ChatMessage
 from ..schemas.content import AnalyzeContent
 from ..services.input_normalizer import InputNormalizer
@@ -44,6 +45,25 @@ from .protocols import (
 )
 
 
+# Outcome of the atomic chat/first-user-message write. The release rule reads
+# these and nothing else:
+#
+#   NOT_ATTEMPTED       nothing ran            -> release permitted
+#   PROVEN_NOT_COMMITTED transaction rolled back -> release permitted
+#   COMMITTED           rows are durable        -> never release
+#   OUTCOME_UNKNOWN     commit/rollback ambiguous -> never release
+#
+# A failed row read-back can never upgrade uncertainty into a release.
+CHAT_START_NOT_ATTEMPTED = "not_attempted"
+CHAT_START_PROVEN_NOT_COMMITTED = "proven_not_committed"
+CHAT_START_COMMITTED = "committed"
+CHAT_START_OUTCOME_UNKNOWN = "outcome_unknown"
+
+_RELEASE_PERMITTED_OUTCOMES = frozenset(
+    {CHAT_START_NOT_ATTEMPTED, CHAT_START_PROVEN_NOT_COMMITTED}
+)
+
+
 @dataclass
 class _TurnBinding:
     """Identities reserved for one logical turn, plus the hooks the receipt
@@ -57,9 +77,9 @@ class _TurnBinding:
     reserved_chat_id: str = ""
     #: The chat this turn actually resolved to, once known.
     chat_id: str | None = None
-    #: True once the chat/user-message write has returned successfully. Until
-    #: then the turn provably persisted nothing and its claim may be released.
-    chat_write_committed: bool = False
+    #: Explicit outcome of the chat/first-user-message write. Never inferred
+    #: from "the call raised": only PROVEN_NOT_COMMITTED authorises a release.
+    chat_start_outcome: str = CHAT_START_NOT_ATTEMPTED
     on_chat_bound: Callable[[str], None] | None = None
     state: AgentState | None = field(default=None, repr=False)
 
@@ -251,31 +271,38 @@ class AgentRuntime:
         )
 
     def _bind_receipt_chat(self, session_id: str, client_request_id: str, chat_id: str) -> None:
+        """Bind the reservation to its chat, or refuse the turn.
+
+        This runs before any chat, message, provider or fact side effect. If it
+        cannot be recorded, a lost response could never be resolved back to this
+        chat -- so continuing would hand the caller an unenforceable key.
+        Swallowing the failure here previously let the whole turn execute.
+        """
+
         if self.request_receipts is None:
-            return
+            raise IdempotencyUnavailableError()
         try:
             self.request_receipts.bind_chat(
                 session_id=session_id, client_request_id=client_request_id, chat_id=chat_id
             )
-        except RequestReceiptStoreError:
-            pass
+        except RequestReceiptStoreError as exc:
+            raise IdempotencyUnavailableError() from exc
 
     def _turn_left_no_trace(self, binding: "_TurnBinding") -> bool:
         """May this turn's reservation be dropped?
 
-        Only when the turn provably wrote nothing. The authority is
-        ``chat_write_committed``, set exactly when the chat/user-message write
-        returned successfully: for a new chat that write is a single
-        transaction, so a raise means both rows rolled back, and for an existing
-        chat the failed insert is one statement that never committed.
+        Release requires *positive proof* that nothing was persisted. The
+        authority is the classified outcome the store reported; "the call
+        raised" is never proof, because a failing ``commit()`` may still have
+        applied the transaction.
 
-        The row read-back below is a secondary confirmation only. It must not be
-        able to *block* a release, or a store that is unreadable at exactly the
-        wrong moment would strand the receipt and refuse the user's retry
-        forever.
+        The row read-back is only allowed to *strengthen* the refusal. An
+        unavailable read-back leaves the decision exactly where the outcome put
+        it -- it can never turn uncertainty into a release, which is what let a
+        retry duplicate a chat and a user message.
         """
 
-        if binding.chat_write_committed:
+        if binding.chat_start_outcome not in _RELEASE_PERMITTED_OUTCOMES:
             return False
         state = binding.state
         if state is not None and state.persistence.user_message_stored:
@@ -286,7 +313,7 @@ class AgentRuntime:
                     return False
             if self.chat_store.message_exists(binding.user_message_id):
                 return False
-        except Exception:  # noqa: BLE001 - confirmation only; the flag decides
+        except Exception:  # noqa: BLE001 - may refuse, never authorise
             pass
         return True
 
@@ -365,18 +392,28 @@ class AgentRuntime:
             first_user_message = first_user_message.model_copy(
                 update={"chat_id": state.chat.chat_id}
             )
-            if state.chat.is_new_chat:
-                # One transaction: a failure can no longer leave a chat with no
-                # messages for a retry to trip over.
-                self.chat_store.create_chat_with_first_user_message(
-                    chat_id=state.chat.chat_id,
-                    session_id=state.request.session_id,
-                    title=self.title_service.make(state.request.question),
-                    message=first_user_message,
-                )
-            else:
-                self.chat_store.add_message(first_user_message)
-            binding.chat_write_committed = True
+            try:
+                if state.chat.is_new_chat:
+                    # One transaction: a failure can no longer leave a chat with
+                    # no messages for a retry to trip over.
+                    self.chat_store.create_chat_with_first_user_message(
+                        chat_id=state.chat.chat_id,
+                        session_id=state.request.session_id,
+                        title=self.title_service.make(state.request.question),
+                        message=first_user_message,
+                    )
+                else:
+                    self.chat_store.add_message(first_user_message)
+            except ChatStartNotCommittedError:
+                binding.chat_start_outcome = CHAT_START_PROVEN_NOT_COMMITTED
+                raise
+            except Exception:
+                # Includes ChatStartOutcomeUnknownError and any unclassified
+                # failure of the existing-chat insert. Unknown is the safe
+                # default: never release a reservation we cannot account for.
+                binding.chat_start_outcome = CHAT_START_OUTCOME_UNKNOWN
+                raise
+            binding.chat_start_outcome = CHAT_START_COMMITTED
             state.persistence.user_message_stored = True
 
         with self._phase(state, "build_same_chat_context"):

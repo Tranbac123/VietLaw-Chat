@@ -139,16 +139,22 @@ class FastDemoRequestReceiptStore:
             return
         try:
             # Matches the other stores: the database directory may not exist yet
-            # on a fresh deployment, and a keyed request now fails closed, so a
-            # missing parent must not look like "idempotency unavailable".
+            # on a fresh deployment.
+            #
+            # Every setup failure -- a denied mkdir, any other OSError, or a
+            # SQLite error -- is normalized to RequestReceiptStoreError. Letting
+            # a PermissionError escape turned a keyed request into a generic
+            # HTTP 500 instead of the controlled idempotency contract, and leaked
+            # a filesystem path in the process. The original exception is kept
+            # only as __cause__, never in the message shown to a user.
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             with self._connect() as connection:
                 connection.execute(_CREATE_TABLE)
                 columns = {
                     row["name"] for row in connection.execute(f"PRAGMA table_info({TABLE_NAME})")
                 }
-        except sqlite3.Error as exc:  # noqa: BLE001 - contained
-            raise RequestReceiptStoreError(f"receipt schema unavailable: {exc}") from exc
+        except (OSError, sqlite3.Error) as exc:
+            raise RequestReceiptStoreError("receipt schema unavailable") from exc
         missing = _REQUIRED_COLUMNS - columns
         if missing:
             raise RequestReceiptStoreError(f"receipt table missing columns: {sorted(missing)}")
@@ -183,7 +189,7 @@ class FastDemoRequestReceiptStore:
                     f"SELECT * FROM {TABLE_NAME} WHERE session_id = ? AND client_request_id = ?",
                     (session_id, client_request_id),
                 ).fetchone()
-        except sqlite3.Error as exc:  # noqa: BLE001 - contained
+        except (OSError, sqlite3.Error) as exc:
             raise RequestReceiptStoreError(f"receipt lookup failed: {exc}") from exc
         return self._row_to_receipt(row) if row is not None else None
 
@@ -230,7 +236,7 @@ class FastDemoRequestReceiptStore:
                     f"SELECT * FROM {TABLE_NAME} WHERE session_id = ? AND client_request_id = ?",
                     (session_id, client_request_id),
                 ).fetchone()
-        except sqlite3.Error as exc:  # noqa: BLE001 - contained
+        except (OSError, sqlite3.Error) as exc:
             raise RequestReceiptStoreError(f"receipt reserve failed: {exc}") from exc
         if row is None:  # pragma: no cover - the insert above guarantees a row
             raise RequestReceiptStoreError("receipt row vanished after reserve")
@@ -257,7 +263,7 @@ class FastDemoRequestReceiptStore:
                     """,
                     (chat_id, _utc_now(), session_id, client_request_id, STATUS_PENDING),
                 )
-        except sqlite3.Error as exc:  # noqa: BLE001 - contained
+        except (OSError, sqlite3.Error) as exc:
             raise RequestReceiptStoreError(f"receipt chat binding failed: {exc}") from exc
 
     def complete(
@@ -292,7 +298,7 @@ class FastDemoRequestReceiptStore:
                         STATUS_PENDING,
                     ),
                 )
-        except sqlite3.Error as exc:  # noqa: BLE001 - contained
+        except (OSError, sqlite3.Error) as exc:
             raise RequestReceiptStoreError(f"receipt completion failed: {exc}") from exc
 
     def release(self, *, session_id: str, client_request_id: str) -> None:
@@ -311,7 +317,7 @@ class FastDemoRequestReceiptStore:
                     f"DELETE FROM {TABLE_NAME} WHERE session_id = ? AND client_request_id = ? AND status = ?",
                     (session_id, client_request_id, STATUS_PENDING),
                 )
-        except sqlite3.Error as exc:  # noqa: BLE001 - contained
+        except (OSError, sqlite3.Error) as exc:
             raise RequestReceiptStoreError(f"receipt release failed: {exc}") from exc
 
 

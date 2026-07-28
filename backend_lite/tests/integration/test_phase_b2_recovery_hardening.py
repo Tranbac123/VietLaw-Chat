@@ -31,7 +31,10 @@ from backend_lite.app.stores.fast_demo_request_receipts import (
     RequestReceiptStoreError,
 )
 from backend_lite.app.stores.fast_demo_state_store import FastDemoStateStore
-from backend_lite.app.stores.sqlite_chat_store import SQLiteChatStore
+from backend_lite.app.stores.sqlite_chat_store import (
+    ChatStartNotCommittedError,
+    SQLiteChatStore,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -82,7 +85,25 @@ ASK_REFUND = plan(
     summary="Tôi cần làm rõ thêm.",
     clarifying_questions=["Chủ nhà có đồng ý hoàn trả tiền cọc không?"],
 )
-ANSWER_ACCEPTED = plan(summary="Đã ghi nhận câu trả lời của bạn.")
+def answer_accepting(slot: str, evidence: str) -> str:
+    """An answering turn whose proposed update is verifiable in the message.
+
+    Phase B3 made acceptance the condition for closing a pending question, so a
+    fixture that answers must actually apply the expected slot -- a bare token
+    with no accepted update deliberately no longer resolves anything.
+    """
+
+    return plan(
+        summary="Đã ghi nhận câu trả lời của bạn.",
+        fact_updates=[
+            {"operation": "negate", "slot": slot, "value": None,
+             "evidence_quote": evidence},
+        ],
+    )
+
+
+ANSWER_HANDOVER = answer_accepting("property_handover_status", "Chưa")
+ANSWER_REFUND = answer_accepting("deposit_returned_status", "Không")
 
 KEYED_QUESTION = "tôi đã đặt cọc 20 triệu cho chủ nhà"
 SEED_QUESTION = "tôi đã đặt cọc tiền thuê nhà cho chủ nhà"
@@ -249,7 +270,9 @@ def test_fault_inside_atomic_start_rolls_back_both_rows(tmp_path: Path) -> None:
 
     with TestClient(app) as client:
         with patch.object(SQLiteChatStore, "_connect", connect):
-            with pytest.raises(sqlite3.OperationalError):
+            # The store classifies this as a proven rollback, which is the only
+            # outcome that authorises releasing the reservation.
+            with pytest.raises(ChatStartNotCommittedError):
                 client.post("/api/analyze", json=KEYED)
         armed["on"] = False
         after_failure = db_counts(db)
@@ -270,11 +293,12 @@ def test_fault_before_the_chat_transaction_leaves_nothing(tmp_path: Path) -> Non
     app, fake, _, db = build(tmp_path, [DEPOSIT_PLAN, DEPOSIT_PLAN])
 
     def boom(self, **kwargs):
-        raise sqlite3.OperationalError("injected before chat creation")
+        # Nothing was opened, let alone written: a proven non-commit.
+        raise ChatStartNotCommittedError("injected before chat creation")
 
     with TestClient(app) as client:
         with patch.object(SQLiteChatStore, "create_chat_with_first_user_message", boom):
-            with pytest.raises(sqlite3.OperationalError):
+            with pytest.raises(ChatStartNotCommittedError):
                 client.post("/api/analyze", json=KEYED)
         after_failure = db_counts(db)
         retry = client.post("/api/analyze", json=KEYED)
@@ -376,18 +400,21 @@ def test_pending_question_id_must_be_allowlisted() -> None:
 
 
 @pytest.mark.parametrize(
-    ("ask", "interruption", "expected_route", "answer", "question_id"),
+    ("ask", "interruption", "expected_route", "answer", "question_id", "answer_plan"),
     [
-        (ASK_HANDOVER, "Cảm ơn bạn.", "social", "Chưa.", "property_handover_status"),
-        (ASK_REFUND, "Xin chào.", "social", "Không.", "deposit_returned_status"),
-        (ASK_HANDOVER, "Bạn có thể làm gì?", "capability", "Có.", "property_handover_status"),
+        (ASK_HANDOVER, "Cảm ơn bạn.", "social", "Chưa.",
+         "property_handover_status", ANSWER_HANDOVER),
+        (ASK_REFUND, "Xin chào.", "social", "Không.",
+         "deposit_returned_status", ANSWER_REFUND),
+        (ASK_HANDOVER, "Bạn có thể làm gì?", "capability", "Chưa.",
+         "property_handover_status", ANSWER_HANDOVER),
     ],
 )
 def test_interruption_preserves_pending_then_answer_resolves_it(
     tmp_path: Path, ask: str, interruption: str, expected_route: str,
-    answer: str, question_id: str,
+    answer: str, question_id: str, answer_plan: str,
 ) -> None:
-    app, _, state_store, _ = build(tmp_path, [ask, ANSWER_ACCEPTED, ANSWER_ACCEPTED])
+    app, _, state_store, _ = build(tmp_path, [ask, answer_plan, answer_plan])
     with TestClient(app) as client:
         first = client.post(
             "/api/analyze", json={"session_id": "s1", "question": SEED_QUESTION}
@@ -413,7 +440,7 @@ def test_interruption_preserves_pending_then_answer_resolves_it(
 
 
 def test_social_interruption_mutates_no_legal_state(tmp_path: Path) -> None:
-    app, _, state_store, _ = build(tmp_path, [ASK_HANDOVER, ANSWER_ACCEPTED])
+    app, _, state_store, _ = build(tmp_path, [ASK_HANDOVER, ANSWER_HANDOVER])
     with TestClient(app) as client:
         first = client.post(
             "/api/analyze", json={"session_id": "s1", "question": SEED_QUESTION}
@@ -467,7 +494,7 @@ def test_a_new_question_replaces_the_previous_pending(tmp_path: Path) -> None:
 
 def test_resolved_pending_does_not_hijack_later_turns(tmp_path: Path) -> None:
     app, _, state_store, _ = build(
-        tmp_path, [ASK_HANDOVER, ANSWER_ACCEPTED, ANSWER_ACCEPTED]
+        tmp_path, [ASK_HANDOVER, ANSWER_HANDOVER, ANSWER_HANDOVER]
     )
     with TestClient(app) as client:
         first = client.post(

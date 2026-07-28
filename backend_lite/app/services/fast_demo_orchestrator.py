@@ -216,10 +216,14 @@ class FastDemoOrchestrator:
             )
             # Pending transitions ride the same candidate state, so they commit
             # under the same CAS as the fact updates -- never as a second write.
+            # If that CAS loses, neither the facts nor this transition is
+            # authoritative, and the question stays open.
             candidate_state.pending_clarification = _next_pending_clarification(
                 current=pending,
                 plan_questions=response.clarifying_questions,
-                answered=_is_answer_turn(message, pending),
+                answered=_pending_answer_accepted(
+                    pending, list(response.metadata.get("applied_slots") or [])
+                ),
                 assistant_message_id=state.persistence.assistant_message_id,
                 state_version=loaded.state_version + 1,
             )
@@ -647,12 +651,17 @@ def _acknowledgement_sentence(current: FastDemoState) -> str:
 # Deterministic rules, evaluated in order:
 #
 #   R1 replace  a legal turn that asks a new clarifying question replaces any
-#               existing pending record (this is also how a genuinely new matter
-#               displaces an unrelated older question);
-#   R2 resolve  a legal turn whose message is a short answer token, and which
-#               was accepted, clears the pending record;
+#               existing pending record;
+#   R2 resolve  the pending question's expected fact slot was actually applied
+#               to state -- not merely proposed, and not merely answered-looking;
 #   R3 keep     anything else leaves it exactly as it was -- including a failed
-#               legal turn, which must never look like an answer.
+#               legal turn and a rejected fact update, neither of which may look
+#               like an answer.
+#
+# NEW MATTER: not supported in this single-issue demo. A distinct matter clears
+# the pending question only if the model happens to ask a replacement one (R1);
+# otherwise the old question is preserved. There is no deterministic new-matter
+# signal here, and guessing one would be worse than keeping the question.
 #
 # Social, capability and acknowledgment routes never reach here: they return
 # before `_commit`, so they cannot touch pending at all.
@@ -680,10 +689,26 @@ def _question_identity(question_text: str) -> str:
     return PENDING_QUESTION_GENERAL
 
 
-def _is_answer_turn(message: str, pending: PendingClarification | None) -> bool:
-    """Was this turn a short answer to the outstanding question?"""
+def _pending_answer_accepted(
+    pending: PendingClarification | None, applied_slots: list[str]
+) -> bool:
+    """Was the outstanding question genuinely answered *and accepted*?
 
-    return pending is not None and is_answer_token(message)
+    Being a bare answer token is not enough, and neither is the provider
+    returning parseable output or visible prose. The question closes only when
+    the fact slot it asks about was actually applied to state -- so a proposal
+    rejected for an unverifiable evidence quote, an invalid value, a disallowed
+    operation, the wrong slot or a stale CAS leaves the question outstanding.
+
+    A ``general`` question has no such slot and is therefore never auto-closed.
+    """
+
+    if pending is None:
+        return False
+    expected = pending.expected_slot
+    if expected is None:
+        return False
+    return expected in set(applied_slots)
 
 
 def _next_pending_clarification(

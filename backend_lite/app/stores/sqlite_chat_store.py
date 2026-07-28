@@ -274,6 +274,28 @@ def verify_base_schema(connection: sqlite3.Connection) -> None:
     )
 
 
+class ChatStartError(RuntimeError):
+    """Base for a failed atomic chat-start."""
+
+
+class ChatStartNotCommittedError(ChatStartError):
+    """The atomic chat/first-message transaction provably did NOT commit.
+
+    Raised only when the failure happened before ``commit()`` was requested AND
+    the rollback succeeded. This is the single condition under which a caller
+    may release an idempotency reservation.
+    """
+
+
+class ChatStartOutcomeUnknownError(ChatStartError):
+    """The transaction may or may not have committed.
+
+    Raised when ``commit()`` itself failed, or when a rollback failed. A caller
+    must never release a reservation on this: the rows may be durably present,
+    and a retry would then duplicate the turn.
+    """
+
+
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -385,6 +407,9 @@ class SQLiteChatStore:
         title: str,
         message: ChatMessage,
     ) -> ChatRecord:
+        # See ChatStartNotCommittedError / ChatStartOutcomeUnknownError: a raise
+        # from this method is *classified*, because "it raised" alone never
+        # proves the transaction did not commit.
         """Create a chat and its first user message in ONE transaction.
 
         As two independently committed writes, a failure between them produced a
@@ -405,7 +430,11 @@ class SQLiteChatStore:
             else None
         )
         resolved_title = title or "Chat mới"
-        connection = self._connect()
+        try:
+            connection = self._connect()
+        except Exception as exc:  # noqa: BLE001 - nothing was opened, let alone written
+            raise ChatStartNotCommittedError("could not open the database") from exc
+
         try:
             # One explicit transaction: either both rows land, or neither does.
             connection.execute("BEGIN IMMEDIATE")
@@ -428,13 +457,38 @@ class SQLiteChatStore:
                     message.created_at,
                 ),
             )
+        except Exception as exc:
+            # Failure *before* commit was requested. Roll back and say so only
+            # if the rollback itself succeeds; a failed rollback leaves the
+            # outcome genuinely unknown.
+            try:
+                connection.rollback()
+            except Exception as rollback_exc:  # noqa: BLE001
+                raise ChatStartOutcomeUnknownError(
+                    "rollback failed after a pre-commit error"
+                ) from rollback_exc
+            finally:
+                self._close_quietly(connection)
+            raise ChatStartNotCommittedError("rolled back before commit") from exc
+
+        try:
             connection.commit()
-        except Exception:
-            connection.rollback()
-            raise
-        finally:
-            connection.close()
+        except Exception as exc:
+            # The database may or may not have durably applied the transaction.
+            # Rolling back here proves nothing, so the caller must treat this as
+            # unknown and must never release an idempotency reservation on it.
+            self._close_quietly(connection)
+            raise ChatStartOutcomeUnknownError("commit outcome is unknown") from exc
+
+        self._close_quietly(connection)
         return ChatRecord(chat_id, session_id, resolved_title, now, now)
+
+    @staticmethod
+    def _close_quietly(connection) -> None:
+        try:
+            connection.close()
+        except Exception:  # noqa: BLE001 - closing must not mask the real outcome
+            pass
 
     def chat_exists(self, chat_id: str) -> bool:
         """Lets the receipt layer prove a failed start left nothing behind
