@@ -27,6 +27,27 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Repo root on sys.path so the build can reuse the production host-allowlist
+# validator instead of duplicating its logic here (see `import_root` below).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from backend_lite.app.services.official_source_hosts import (  # noqa: E402
+    is_trusted_official_host,
+)
+
+#: Civil Code (91/2015/QH13) snippets: the only IDs subject to the exact-host
+#: and document-number checks below. Traffic/business snippets cite other,
+#: already-verified government hosts and are untouched by this validation.
+OFFICIAL_SOURCE_BOUNDED_IDS = {
+    "civil_deposit_001",
+    "civil_contract_001",
+    "civil_contract_002",
+}
+
+CIVIL_CODE_DOCUMENT_NUMBER = "91/2015/QH13"
+
 ALLOWED_DOMAINS = {
     "civil_dispute",
     "traffic",
@@ -192,6 +213,42 @@ def require_list(value: Any, path: Path, field: str) -> list[str]:
     return cleaned
 
 
+def validate_official_source_metadata(snippet_id: str, meta: dict[str, Any], path: Path) -> None:
+    """Enforce the exact-host allowlist and document number for the bounded
+    Civil Code IDs. Fails the build deterministically -- this is a hard
+    compile error, not a warning, so a deceptive or unauthorized URL can
+    never reach `data/legal_snippets.json`.
+
+    Scoped to `OFFICIAL_SOURCE_BOUNDED_IDS` only: traffic/business snippets
+    cite other already-verified government hosts and must not be rejected by
+    this check.
+    """
+
+    if snippet_id not in OFFICIAL_SOURCE_BOUNDED_IDS:
+        return
+
+    for field in ("source_url", "official_backup_url", "official_tertiary_url"):
+        url = str(meta.get(field, "")).strip()
+        if not url:
+            raise SnippetBuildError(
+                f"{path}: {snippet_id} requires a non-empty {field} for the "
+                "official-source migration"
+            )
+        if not is_trusted_official_host(url):
+            raise SnippetBuildError(
+                f"{path}: {snippet_id}.{field} {url!r} is not an exact allowed "
+                "official host (https + congbao.chinhphu.vn / vanban.chinhphu.vn "
+                "/ vbpl.vn only)"
+            )
+
+    document_number = str(meta.get("official_document_number", "")).strip()
+    if document_number != CIVIL_CODE_DOCUMENT_NUMBER:
+        raise SnippetBuildError(
+            f"{path}: {snippet_id}.official_document_number must be exactly "
+            f"{CIVIL_CODE_DOCUMENT_NUMBER!r}, got {document_number!r}"
+        )
+
+
 def parse_snippet(path: Path) -> dict[str, Any]:
     raw = path.read_text(encoding="utf-8")
     match = FRONTMATTER_RE.match(raw)
@@ -250,6 +307,8 @@ def parse_snippet(path: Path) -> dict[str, Any]:
         raise SnippetBuildError(f"{path}: ## Text must not be empty")
     if not snippet["plain_language_summary"]:
         raise SnippetBuildError(f"{path}: ## Plain summary must not be empty")
+
+    validate_official_source_metadata(snippet["id"], meta, path)
 
     return snippet
 

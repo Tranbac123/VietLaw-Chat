@@ -2,12 +2,15 @@
 id: civil_contract_001
 domain: civil_dispute
 source_name: "Bộ luật Dân sự 2015 - Điều 398"
-source_url: "https://vbpl.moj.gov.vn/tuyenquang/Pages/vbpq-toanvan.aspx?ItemID=95942&Keyword="
+official_document_number: "91/2015/QH13"
+source_url: "https://congbao.chinhphu.vn/van-ban/luat-so-91-2015-qh13-18397.htm"
+official_backup_url: "https://vanban.chinhphu.vn/default.aspx?docid=183188&pageid=27160"
+official_tertiary_url: "https://vbpl.vn/van-ban/chi-tiet/bo-luat-dan-su-so-91-2015-qh13--95942"
 source_type: official_source
 status: active
 tags: ["hop_dong", "noi_dung_hop_dong", "nghia_vu", "thanh_toan", "thoi_han", "tranh_chap_hop_dong", "dan_su"]
 risk_notes: ["medium_risk", "contract_dispute"]
-last_checked: 2026-07-10
+last_checked: 2026-07-29
 ---
 # Nội dung cơ bản của hợp đồng
 
