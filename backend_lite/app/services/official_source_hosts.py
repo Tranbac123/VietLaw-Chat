@@ -46,6 +46,18 @@ def is_trusted_official_host(url: str | None) -> bool:
     if not parsed.hostname:
         return False
 
+    try:
+        port = parsed.port
+    except ValueError:
+        # A non-numeric (":evil") or out-of-range (":65536") port. `.port`
+        # raises rather than returning None, so this must be caught explicitly.
+        return False
+    if port is not None:
+        # None of the three verified URLs carry an explicit port -- not even
+        # the default ":443" -- so any explicit port is treated as a mismatch
+        # from the verified form rather than silently accepted.
+        return False
+
     return parsed.hostname.lower() in OFFICIAL_SOURCE_HOSTS
 
 

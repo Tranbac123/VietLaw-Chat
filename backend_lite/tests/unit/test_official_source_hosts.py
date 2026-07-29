@@ -106,6 +106,38 @@ def test_non_string_and_empty_inputs_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
+# LOW-01 correction: malformed / out-of-range / explicit ports
+# ---------------------------------------------------------------------------
+
+def test_malformed_textual_port_rejected() -> None:
+    assert not is_trusted_official_host("https://congbao.chinhphu.vn:evil/x")
+
+
+def test_explicit_default_https_port_rejected() -> None:
+    # Even the semantically-default ":443" is rejected -- no explicit port
+    # is present on any of the three verified URLs, so an explicit port is
+    # treated as a mismatch from the verified form, not silently accepted.
+    assert not is_trusted_official_host("https://congbao.chinhphu.vn:443/x")
+
+
+def test_out_of_range_port_rejected() -> None:
+    assert not is_trusted_official_host("https://congbao.chinhphu.vn:65536/x")
+
+
+def test_explicit_zero_port_rejected() -> None:
+    assert not is_trusted_official_host("https://congbao.chinhphu.vn:0/x")
+
+
+def test_valid_curated_urls_still_accepted_after_port_check() -> None:
+    # The port check must not regress any already-accepted host.
+    assert is_trusted_official_host(PRIMARY_URL)
+    assert is_trusted_official_host(BACKUP_URL)
+    assert is_trusted_official_host(
+        "https://vbpl.vn/van-ban/chi-tiet/bo-luat-dan-su-so-91-2015-qh13--95942"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Curated Civil Code data now uses a trusted host (data-integrity, not just
 # unit-level regex correctness)
 # ---------------------------------------------------------------------------
@@ -289,6 +321,19 @@ def test_build_fails_on_http_civil_code_url(tmp_path: Path) -> None:
     root = _copy_snippets_md(tmp_path)
     target = root / "civil_dispute" / "001_civil_deposit_001.md"
     text = target.read_text(encoding="utf-8").replace("https://congbao", "http://congbao")
+    target.write_text(text, encoding="utf-8")
+
+    with pytest.raises(build_snippets.SnippetBuildError, match="not an exact allowed official host"):
+        build_snippets.build(root, tmp_path / "out.json")
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_build_fails_on_malformed_port_civil_code_url(tmp_path: Path) -> None:
+    root = _copy_snippets_md(tmp_path)
+    target = root / "civil_dispute" / "001_civil_deposit_001.md"
+    text = target.read_text(encoding="utf-8").replace(
+        PRIMARY_URL, "https://congbao.chinhphu.vn:evil/van-ban/luat-so-91-2015-qh13-18397.htm"
+    )
     target.write_text(text, encoding="utf-8")
 
     with pytest.raises(build_snippets.SnippetBuildError, match="not an exact allowed official host"):
