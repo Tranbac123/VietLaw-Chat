@@ -16,11 +16,14 @@
 const SELECTED_CHAT_KEY = 'vietlaw.selected_chat_id.v1';
 
 /**
- * Bounded shape check. Chat ids are backend-generated (`chat_<hex>`); anything
- * else -- an empty string, a path, an object, an oversized blob -- is rejected
- * before it can reach a request.
+ * Exact shape check, matched to the backend's own generator:
+ * `f"chat_{uuid4().hex}"` in `sqlite_chat_store.py` -- "chat_" followed by
+ * exactly 32 lowercase hex characters. Not a loose "looks plausible" pattern:
+ * anything of a different length, uppercase, or non-hex is a value this
+ * backend could never have issued, so it is rejected before it can reach a
+ * request.
  */
-const CHAT_ID_PATTERN = /^chat_[A-Za-z0-9]{8,64}$/;
+const CHAT_ID_PATTERN = /^chat_[0-9a-f]{32}$/;
 
 export function isValidChatId(value: unknown): value is string {
   return typeof value === 'string' && CHAT_ID_PATTERN.test(value);

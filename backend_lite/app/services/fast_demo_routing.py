@@ -26,6 +26,16 @@ _SEPARATORS = re.compile(r"[-_/\\()\[\]{}.·,;:!?\"'“”‘’…]+")
 class FastDemoRoute(str, Enum):
     SOCIAL = "social"
     CAPABILITY = "capability"
+    # Distinct from CAPABILITY ("bạn là ai" -- who the ASSISTANT is): this is
+    # "tôi là ai" -- the user asking about their OWN identity. Folding it into
+    # CAPABILITY would answer a question about the user with a description of
+    # the assistant, which is exactly the kind of semantically wrong reply a
+    # bounded deterministic route must not give.
+    USER_IDENTITY = "user_identity"
+    # "bạn nhớ gì về tôi" / "bạn biết gì về tôi": must answer only from facts
+    # already accepted into this chat's state, never invent identity, and
+    # never claim memory beyond the current chat.
+    MEMORY = "memory"
     ACKNOWLEDGMENT = "acknowledgment"
     LEGAL_CONVERSATION = "legal_conversation"
     UNSAFE = "unsafe"
@@ -81,6 +91,17 @@ _CAPABILITY_RE = re.compile(
     r"|who\s+are\s+you|what\s+are\s+you|what\s+can\s+you\s+do|help"
     r")"
     + _TAIL + r"$"
+)
+
+# "tôi là ai" -- the user asking about their OWN identity, not the assistant's.
+# Deliberately narrow and full-message anchored, like the other social anchors.
+_USER_IDENTITY_RE = re.compile(
+    r"^toi\s+la\s+ai" + _TAIL + r"$"
+)
+
+# "bạn nhớ gì về tôi" / "bạn biết gì về tôi" and light variants.
+_MEMORY_QUERY_RE = re.compile(
+    r"^(?:ban|may)\s+(?:co\s+)?(?:nho|biet)\s+gi\s+ve\s+toi" + _TAIL + r"$"
 )
 
 # Bare acknowledgments: "ok", "vâng", "cảm ơn". These carry no new instruction,
@@ -212,8 +233,9 @@ def classify_route(
       2. explicit legal/current-turn intent (deposit cues, below);
       3. a short answer to a pending structured legal clarification;
       4. capability / greeting;
-      5. pure acknowledgment;
-      6. remaining legal / scope handling.
+      5. user-identity / memory questions;
+      6. pure acknowledgment;
+      7. remaining legal / scope handling.
 
     ``pending_clarification`` must come from a structured persisted assistant
     field, never from parsing assistant prose.
@@ -239,6 +261,12 @@ def classify_route(
         return FastDemoRoute.SOCIAL
     if _CAPABILITY_RE.match(normalized):
         return FastDemoRoute.CAPABILITY
+    # Checked before ACKNOWLEDGMENT and before the deposit/scope fallback so
+    # neither can absorb a genuine identity or memory question.
+    if _USER_IDENTITY_RE.match(normalized):
+        return FastDemoRoute.USER_IDENTITY
+    if _MEMORY_QUERY_RE.match(normalized):
+        return FastDemoRoute.MEMORY
     # Bare acknowledgment. Checked before the topic cues so a standalone "được"
     # is a reply, not a deposit keyword hit, but after the anchors above so an
     # acknowledgment carrying a real question stays on its proper route.
@@ -324,17 +352,30 @@ def classify_legal_intent(text: str) -> LegalIntent:
     return LegalIntent.GENERAL
 
 
+# A bare greeting must not immediately demand rental-deposit facts -- that
+# reads as though the assistant can only handle one script and is waiting for
+# the user to feed it. It introduces itself and asks an open question instead;
+# the scope disclosure lives in CAPABILITY_TEXT/SCOPE_TEXT for when the user
+# actually asks what it can do or wanders outside what is supported.
 GREETING_TEXT = (
-    "Xin chào! Tôi có thể giúp bạn xử lý tình huống tiền cọc thuê nhà: phân tích sự việc, "
-    "xác định thông tin còn thiếu, chuẩn bị chứng cứ, gợi ý bước tiếp theo và soạn tin nhắn "
-    "yêu cầu hoàn cọc. Bạn kể giúp tôi tình huống của bạn nhé."
+    "Xin chào! Tôi là VietLaw. Tôi có thể hỗ trợ bạn tìm hiểu và xử lý các tình huống "
+    "pháp lý trong phạm vi hiện được hỗ trợ. Bạn đang cần giúp về vấn đề gì?"
 )
 
 CAPABILITY_TEXT = (
-    "Tôi có thể giúp bạn phân tích tình huống tiền cọc thuê nhà, xác định thông tin còn "
-    "thiếu, chuẩn bị chứng cứ, đề xuất bước tiếp theo và soạn tin nhắn yêu cầu hoàn trả.\n\n"
-    "Bạn chỉ cần cho tôi biết số tiền đã đặt cọc, giấy tờ hoặc chứng từ đang có, và chủ nhà "
-    "đã phản hồi thế nào."
+    "Tôi là VietLaw. Phiên bản hiện tại tập trung chủ yếu vào các tranh chấp tiền cọc "
+    "thuê nhà: phân tích tình huống, xác định thông tin còn thiếu, chuẩn bị chứng cứ, "
+    "đề xuất bước tiếp theo và soạn tin nhắn yêu cầu hoàn trả.\n\n"
+    "Nếu bạn đang gặp vấn đề về tiền cọc, bạn chỉ cần cho tôi biết số tiền đã đặt cọc, "
+    "giấy tờ hoặc chứng từ đang có, và chủ nhà đã phản hồi thế nào."
+)
+
+# "tôi là ai" -- the user asking about THEIR OWN identity. Must not pretend to
+# recognize the user, and must not be answered with CAPABILITY_TEXT (a
+# description of the assistant, not of the user).
+USER_IDENTITY_TEXT = (
+    "Tôi chưa biết danh tính của bạn. Tôi chỉ biết những thông tin bạn đã chủ động "
+    "cung cấp trong cuộc trò chuyện này."
 )
 
 # Acknowledgments get two variants so the reply matches the conversation the
@@ -372,6 +413,7 @@ __all__ = [
     "GREETING_TEXT",
     "SCOPE_TEXT",
     "UNSAFE_TEXT",
+    "USER_IDENTITY_TEXT",
     "classify_route",
     "is_answer_token",
     "is_unsafe",

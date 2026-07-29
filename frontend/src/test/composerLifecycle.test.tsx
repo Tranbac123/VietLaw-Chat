@@ -158,16 +158,19 @@ describe('a submission refused before dispatch', () => {
     expectComposerEmpty();
   });
 
-  it('preserves a draft typed while the answer is still revealing', async () => {
-    // Phase C decoupled the reveal from the request lifecycle, so submitting
-    // during a reveal is now *allowed* rather than refused. What still has to
-    // hold either way is that typing during a reveal is never discarded, which
-    // is what this asserts; the branch below covers the refusal case if the
-    // composer happens to be busy at that instant.
+  it('blocks Composer input and prevents a second dispatch while request A is thinking', async () => {
+    // Section B of the H-01 correction: while a request is actually pending
+    // ("thinking", not merely "revealing"), the composer is disabled outright.
+    // This does NOT prove "draft preservation" -- the composer is empty at
+    // this point (it cleared on A's own accepted dispatch) and stays empty,
+    // since a disabled textarea cannot accept new keystrokes to begin with.
+    // What it proves is that input is genuinely blocked and that no second
+    // dispatch can be smuggled through while blocked. Both assertions below
+    // are unconditional -- neither depends on which branch of any race the
+    // test happens to observe.
     const { analyze } = apiMocks();
-    analyze.mockResolvedValueOnce(
-      makeAnalyzeResponse({ summary: 'Câu trả lời dài. '.repeat(40) }),
-    );
+    const pending = deferred<AnalyzeResponse>();
+    analyze.mockReturnValueOnce(pending.promise);
 
     const { user } = renderApp();
     await waitForComposerReady();
@@ -175,21 +178,76 @@ describe('a submission refused before dispatch', () => {
     await sendViaControls(user, 'Câu hỏi một');
     await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
 
-    // Wait until the reveal has begun and the input is typable again.
+    const textarea = composerTextarea();
+    expect(textarea).toBeDisabled();
+    expectComposerEmpty();
+
+    // Attempting to type into a disabled composer must not silently smuggle
+    // text in, must not throw, and must not let Enter reach a second dispatch.
+    await user.type(textarea, 'Soạn trong lúc chờ');
+    expect(textarea.value).toBe('');
+    await user.keyboard('{Enter}');
+
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(textarea.value).toBe('');
+
+    pending.resolve(makeAnalyzeResponse({ summary: 'Trả lời một.' }));
+    await waitForAssistantText('Trả lời một.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// H-01 correction: a second submission accepted while the previous answer is
+// still revealing. This must be proven unconditionally -- Phase C made Send
+// stay enabled through a reveal, so a test that only asserts inside
+// `if (sendButton().disabled)` can pass without ever exercising the accepted
+// path, which is exactly what the independent review found in the committed
+// version of this file.
+// ---------------------------------------------------------------------------
+
+describe('a second submission accepted while the previous answer is revealing', () => {
+  it.each([
+    ['the Send button', 'click' as const],
+    ['Enter', 'enter' as const],
+  ])('is accepted via %s and reaches a second analyze call', async (_label, via) => {
+    const { analyze } = apiMocks();
+    analyze
+      .mockResolvedValueOnce(makeAnalyzeResponse({ summary: 'Câu trả lời dài. '.repeat(40) }))
+      .mockResolvedValueOnce(makeAnalyzeResponse({ summary: 'Câu trả lời hai.' }));
+
+    const { user } = renderApp();
+    await waitForComposerReady();
+
+    await sendViaControls(user, 'Câu hỏi một');
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(1));
+
+    // Reveal has begun: input is enabled again while A is still animating.
     const textarea = composerTextarea();
     await waitFor(() => expect(textarea).not.toBeDisabled());
-    await user.click(textarea);
-    await user.type(textarea, 'Soạn trong lúc chờ');
 
-    if (sendButton().disabled) {
-      // Still revealing: the submission is refused and the draft must survive.
+    // Unconditional, not "if still revealing": both controls must be usable
+    // the moment the composer is ready, regardless of how far A's reveal got.
+    expect(textarea).not.toBeDisabled();
+    expect(sendButton()).toBeDisabled(); // empty draft only, not a busy state
+
+    await user.click(textarea);
+    await user.type(textarea, 'Câu hỏi hai');
+    expect(sendButton()).not.toBeDisabled();
+
+    if (via === 'enter') {
       await user.keyboard('{Enter}');
-      expect(analyze).toHaveBeenCalledTimes(1);
-      expect(textarea.value).toBe('Soạn trong lúc chờ');
+    } else {
+      await user.click(sendButton());
     }
 
-    // Either way the draft was never silently discarded.
-    expect(textarea.value).toBe('Soạn trong lúc chờ');
+    await waitFor(() => expect(analyze).toHaveBeenCalledTimes(2));
+    expect(analyze.mock.calls[1][0]).toMatchObject({ question: 'Câu hỏi hai' });
+    expect(countUserMessagesWithText('Câu hỏi hai')).toBe(1);
+    expectComposerEmpty();
+
+    await waitForAssistantText('Câu trả lời hai.');
+    // No duplicate: exactly two user turns, exactly two analyze calls total.
+    expect(analyze).toHaveBeenCalledTimes(2);
   });
 });
 

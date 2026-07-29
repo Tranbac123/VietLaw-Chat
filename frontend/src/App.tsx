@@ -188,12 +188,21 @@ export function App() {
     // only a fresh submission follows the currently selected chat.
     const targetChatId = resubmission ? resubmission.chatId : activeChatId;
     // A still-revealing previous answer must not refuse a new submission; only
-    // a request genuinely in flight does. Bumping the generation below retires
-    // the old reveal, which is presentation-only and safe to abandon.
+    // a request genuinely in flight does.
     if (assistantResponsePhase === 'thinking' || loadingChat) return false;
 
     const generation = responseGenerationRef.current + 1;
     responseGenerationRef.current = generation;
+    // Retire whatever was still revealing the instant this submission is
+    // accepted -- not when B's own response eventually arrives. Bumping the
+    // generation above only affects which in-flight request is allowed to
+    // apply its result; it has no effect on the previous answer's own reveal
+    // timer, which is owned entirely inside StructuredAnswer/useWordReveal and
+    // keyed off `animatingAssistantMessageId`. Clearing it here is what makes
+    // that message's `animate` prop go false on the next render, which is what
+    // makes the old reveal complete immediately and its interval get cleared.
+    animatingAssistantMessageIdRef.current = null;
+    setAnimatingAssistantMessageId(null);
     const temporaryUserMessageId = resubmission?.temporaryUserMessageId
       ?? `temporary-user-${generation}`;
     const requestCreatedAt = new Date().toISOString();

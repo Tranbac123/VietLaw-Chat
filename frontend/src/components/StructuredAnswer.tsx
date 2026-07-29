@@ -275,38 +275,34 @@ export function StructuredAnswer({
   const visibleSummary = summaryGraphemes.slice(0, revealState.summaryLength).join('');
   const animateItems = isRevealing && !prefersReducedMotion();
 
-  // Social turns (greeting/identity/capability) are a direct conversational reply, not
-  // a legal analysis: no domain/risk/decision badges, no clarification/checklist/next-step
-  // sections, no source panel, no legal safety disclaimer -- just the assistant text with
-  // the same reveal animation as a normal message. Anything that is not literally
-  // response_kind === 'social' (including older persisted messages without the field)
-  // falls through to the existing full legal rendering below.
-  // Inline literal comparison (not a hoisted boolean) so TypeScript narrows the
-  // discriminated union and the code below is known to be the legal variant.
+  // Social turns (greeting/identity/user-identity/memory/capability/out-of-scope)
+  // are a direct conversational reply, not a legal analysis: no domain/risk/
+  // decision badges, no clarification/checklist/next-step sections, no source
+  // panel, no legal safety disclaimer -- just the assistant text. It uses the
+  // SAME word-reveal controller as a structured Fast Demo legal answer
+  // (`useWordReveal`, via `SocialAnswer` below), not the character typewriter:
+  // these responses used to fall through to the typewriter-driven render
+  // below, but `typewriterAnimate` is unconditionally false whenever
+  // `content.metadata.fast_demo` is true (every Fast Demo response, social
+  // included) -- so a greeting or identity answer from this backend never
+  // animated at all despite `animate` being true. Routing it through the same
+  // controller other assistant text uses fixes that and keeps the
+  // "exactly one reveal controller" invariant. Anything that is not literally
+  // response_kind === 'social'/'capability'/'scope' (including older persisted
+  // messages without the field) falls through to the existing full legal
+  // rendering below.
   if (
     content.response_kind === 'social'
     || content.response_kind === 'capability'
     || content.response_kind === 'scope'
   ) {
     return (
-      <div className="structured-answer structured-answer--social">
-        {isRevealing && (
-          <button
-            className="answer-reveal-skip"
-            type="button"
-            onClick={() => completeNowRef.current?.()}
-            aria-label="Hiển thị toàn bộ phản hồi ngay"
-          >
-            Hiện ngay
-          </button>
-        )}
-        <p className="message-text">
-          {visibleSummary}
-          {isRevealing && revealState.summaryLength < summaryGraphemes.length && (
-            <span className="typewriter-cursor" aria-hidden="true">▍</span>
-          )}
-        </p>
-      </div>
+      <SocialAnswer
+        content={content}
+        animate={animate}
+        onRevealComplete={() => onAnimationCompleteRef.current?.()}
+        onRevealStep={() => onAnimationProgressRef.current?.()}
+      />
     );
   }
 
@@ -377,6 +373,44 @@ export function StructuredAnswer({
   );
 }
 
+
+interface SocialAnswerProps {
+  content: AnalyzeContent;
+  /** True only for a newly received response; persisted answers render whole. */
+  animate: boolean;
+  onRevealComplete: () => void;
+  onRevealStep: () => void;
+}
+
+/**
+ * Social / capability / scope answers: a single paragraph, word-revealed by
+ * the same `useWordReveal` controller `FastDemoAnswer` uses. There is nothing
+ * else to stage -- no blocks, no lists, no controls -- so this is the whole
+ * component.
+ */
+function SocialAnswer({ content, animate, onRevealComplete, onRevealStep }: SocialAnswerProps) {
+  const totalWords = countWords(content.summary);
+  const { revealedWords, isRevealing, revealAll } = useWordReveal(totalWords, animate, {
+    onStep: onRevealStep,
+    onComplete: onRevealComplete,
+  });
+
+  return (
+    <div className="structured-answer structured-answer--social">
+      {isRevealing && (
+        <button
+          className="answer-reveal-skip"
+          type="button"
+          onClick={revealAll}
+          aria-label="Hiển thị toàn bộ phản hồi ngay"
+        >
+          Hiện ngay
+        </button>
+      )}
+      <p className="message-text">{wordPrefix(content.summary, revealedWords)}</p>
+    </div>
+  );
+}
 
 interface FastDemoAnswerProps {
   content: AnalyzeContent;

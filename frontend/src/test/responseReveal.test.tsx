@@ -16,16 +16,24 @@ import { act, cleanup, render } from '@testing-library/react';
 import { setReducedMotion } from './setup';
 import { StructuredAnswer } from '../components/StructuredAnswer';
 import {
+  MAX_TIMER_TICKS,
   MAX_TOTAL_REVEAL_MS,
+  MIN_TIMER_TICKS,
+  SHORT_RESPONSE_MIN_REVEAL_MS,
   WORD_INTERVAL_MS,
+  actualRevealDurationMs,
   countWords,
-  wordsPerTick,
+  effectiveWordsPerTick,
+  lengthBandWordsPerTick,
+  requiredTickCount,
+  wordsAfterTick,
 } from '../lib/reveal';
 import {
   apiMocks,
   assistantBubbles,
   composerTextarea,
   countUserMessagesWithText,
+  deferred,
   makeAnalyzeResponse,
   makeChatDetail,
   makeChatList,
@@ -308,25 +316,130 @@ describe('word-by-word reveal', () => {
     expect(container.textContent ?? '').not.toContain('Nguồn tham khảo');
   });
 
-  it('adapts words per tick so a long answer stays bounded', () => {
-    expect(wordsPerTick(50)).toBe(1);
-    expect(wordsPerTick(200)).toBe(2);
-    expect(wordsPerTick(400)).toBe(3);
+  // -------------------------------------------------------------------------
+  // M-01 correction: the ceiling must be proven with the hook's ACTUAL integer
+  // tick semantics, not `(total / step) * interval`. That formula ignores that
+  // one word is already visible before the first tick and that a partial tick
+  // still costs a full WORD_INTERVAL_MS -- which is exactly why the previously
+  // committed formula silently exceeded the ceiling at 2294 words (6528 ms).
+  // -------------------------------------------------------------------------
 
-    // The declared budget is the invariant, not a hard-coded number: whatever
-    // WORD_INTERVAL_MS / MAX_TOTAL_REVEAL_MS are set to, no length may exceed it.
-    for (const words of [50, 120, 202, 300, 400, 900, 2_000]) {
-      const duration = (words / wordsPerTick(words)) * WORD_INTERVAL_MS;
-      expect(duration).toBeLessThanOrEqual(MAX_TOTAL_REVEAL_MS);
-    }
+  it('uses the demo-pacing rate for short and medium responses', () => {
+    expect(lengthBandWordsPerTick(50)).toBe(1);
+    expect(lengthBandWordsPerTick(200)).toBe(2);
+    expect(lengthBandWordsPerTick(400)).toBe(3);
   });
 
-  it('reveals the ~202-word fixture answer at the intended demo pace', () => {
-    // The owner tunes this by feel in the browser; the range is asserted here so
-    // a later timing change cannot drift it silently.
-    const seconds = (202 / wordsPerTick(202)) * WORD_INTERVAL_MS / 1000;
-    expect(seconds).toBeGreaterThanOrEqual(3.3);
-    expect(seconds).toBeLessThanOrEqual(3.8);
+  it('the previously committed formula exceeded budget at 2294 words', () => {
+    // Documents the exact regression the independent review found, using the
+    // HISTORICAL constants that were live at the time (34 ms / 6500 ms) --
+    // hardcoded on purpose rather than importing the current `WORD_INTERVAL_MS`
+    // / `MAX_TOTAL_REVEAL_MS`, since those have since been retuned (to 50 ms /
+    // 8000 ms) for pacing reasons unrelated to this bug. This test's job is to
+    // document that the OLD formula broke its OWN contemporary ceiling, not to
+    // track whatever the current tuning happens to be.
+    //
+    // The old `wordsPerTick` computed its budget-derived rate from
+    // `totalWords` directly (not from the words actually left to reveal after
+    // the already-visible first word), and the naive `(total / step) *
+    // interval` continuous formula silently UNDER-counts the real cost versus
+    // the hook's actual integer-tick loop, which always rounds a partial tick
+    // up to a full interval. Simulating the real loop with the old step
+    // formula is what actually reproduces the 6528 ms overrun.
+    const HISTORICAL_WORD_INTERVAL_MS = 34;
+    const HISTORICAL_MAX_TOTAL_REVEAL_MS = 6500;
+    const oldStep = Math.max(
+      1, 3,
+      Math.ceil((2294 * HISTORICAL_WORD_INTERVAL_MS) / HISTORICAL_MAX_TOTAL_REVEAL_MS),
+    );
+    let revealed = 1;
+    let ticks = 0;
+    while (revealed < 2294) {
+      revealed = Math.min(revealed + oldStep, 2294);
+      ticks += 1;
+    }
+    const oldDurationMs = ticks * HISTORICAL_WORD_INTERVAL_MS;
+    expect(oldDurationMs).toBeGreaterThan(HISTORICAL_MAX_TOTAL_REVEAL_MS);
+  });
+
+  it.each([0, 1, 120, 121, 300, 301, 573, 574, 2293, 2294, 2295, 5000])(
+    'keeps the actual rendered duration within the ceiling at %i words',
+    (words) => {
+      const duration = actualRevealDurationMs(words);
+      expect(duration).toBeLessThanOrEqual(MAX_TOTAL_REVEAL_MS);
+      expect(effectiveWordsPerTick(words)).toBeGreaterThanOrEqual(1);
+    },
+  );
+
+  it('fails the boundary case that the committed implementation got wrong', () => {
+    // 2294 is the first word count where the OLD formula broke the ceiling.
+    // The corrected implementation must land at or under it.
+    expect(actualRevealDurationMs(2294)).toBeLessThanOrEqual(MAX_TOTAL_REVEAL_MS);
+  });
+
+  it('never exceeds the ceiling for any word count in 0..10000', () => {
+    let worstCase = 0;
+    for (let words = 0; words <= 10_000; words += 1) {
+      const duration = actualRevealDurationMs(words);
+      if (duration > worstCase) worstCase = duration;
+      expect(duration).toBeLessThanOrEqual(MAX_TOTAL_REVEAL_MS);
+      expect(effectiveWordsPerTick(words)).toBeGreaterThanOrEqual(1);
+    }
+    // The ceiling is real, not decorative: something in the range actually
+    // gets close to it.
+    expect(worstCase).toBeGreaterThan(MAX_TOTAL_REVEAL_MS * 0.9);
+  });
+
+  it('the effective rate is not capped at 3 for very long responses', () => {
+    // The demo-pacing band tops out at 3, but the budget-driven rate must be
+    // free to exceed it -- otherwise the ceiling above could not hold for long
+    // answers. 5000 words at a rate capped at 3 would take 5000/3*50 ≈ 83 s.
+    expect(effectiveWordsPerTick(5000)).toBeGreaterThan(3);
+  });
+
+  it('MAX_TIMER_TICKS is the floor of the ceiling divided by the interval', () => {
+    expect(MAX_TIMER_TICKS).toBe(Math.floor(MAX_TOTAL_REVEAL_MS / WORD_INTERVAL_MS));
+  });
+
+  it('reveals the ~202-word fixture answer at the AI-like demo pace', () => {
+    // Requested range 5.0-5.8 s (the owner considered the prior 3.43 s too
+    // fast, reading like a pre-generated answer being flashed). Asserted here
+    // so a later timing change cannot drift it silently.
+    const seconds = actualRevealDurationMs(202) / 1000;
+    expect(seconds).toBeGreaterThanOrEqual(5.0);
+    expect(seconds).toBeLessThanOrEqual(5.8);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Reveal floor: a genuinely short response must still visibly animate.
+  // ---------------------------------------------------------------------------
+
+  it('MIN_TIMER_TICKS is the ceiling of the floor divided by the interval', () => {
+    expect(MIN_TIMER_TICKS).toBe(Math.ceil(SHORT_RESPONSE_MIN_REVEAL_MS / WORD_INTERVAL_MS));
+  });
+
+  it.each([5, 8, 10, 15])(
+    'stretches a short %i-word response to at least the reveal floor',
+    (words) => {
+      const duration = actualRevealDurationMs(words);
+      expect(duration).toBeGreaterThanOrEqual(SHORT_RESPONSE_MIN_REVEAL_MS);
+      // Nowhere near the imperceptible 100-200 ms a naive 1-word/tick rate
+      // would have given a 5-15 word response before the floor existed.
+      expect(duration).toBeGreaterThan(200);
+    },
+  );
+
+  it('spreads a short response across the whole floor rather than padding after full reveal', () => {
+    // 5 words, floor = 12 ticks. If words were front-loaded and the remaining
+    // ticks were silent padding, revealedWords would already equal the total
+    // well before the halfway tick. Even distribution keeps genuine growth
+    // happening across the whole window.
+    const total = 5;
+    const required = requiredTickCount(total);
+    const atHalfway = wordsAfterTick(total, Math.floor(required / 2), required);
+    const atFull = wordsAfterTick(total, required, required);
+    expect(atFull).toBe(total);
+    expect(atHalfway).toBeLessThan(total);
   });
 
   it('counts words rather than characters', () => {
@@ -339,23 +452,104 @@ describe('word-by-word reveal', () => {
 // Immediate responses
 // ---------------------------------------------------------------------------
 
-describe('responses that are never word-revealed', () => {
+// ---------------------------------------------------------------------------
+// Universal conversational reveal: PHASE C CORRECTION §2.
+//
+// Previously, social/capability/scope answers fell through to a branch whose
+// `typewriterAnimate` is unconditionally false whenever `metadata.fast_demo`
+// is true -- which every Fast Demo response is, social included. So "hello"
+// and "bạn là ai" popped in instantly while a rental answer animated: not two
+// controllers racing, but one kind of response falling outside the only
+// controller entirely. `SocialAnswer` now routes these through the exact same
+// `useWordReveal` hook `FastDemoAnswer` uses -- there is still exactly one
+// reveal controller, it now simply covers every assistant-generated text
+// response instead of only structured legal ones.
+// ---------------------------------------------------------------------------
+
+/** The social/capability/scope paragraph's current text, or '' if absent. */
+function socialTextIn(): string {
+  return document.querySelector('.structured-answer--social .message-text')?.textContent ?? '';
+}
+
+describe('conversational assistant text reveals progressively by words', () => {
   it.each([
-    ['social', 'Xin chào!'],
-    ['capability', 'Tôi có thể giúp bạn về tiền cọc.'],
-  ] as const)('shows a %s response immediately', async (kind, summary) => {
+    ['hello', 'Xin chào! Tôi là VietLaw. Tôi có thể hỗ trợ bạn tìm hiểu và xử lý các tình huống pháp lý.'],
+    ['bạn là ai', 'Tôi là VietLaw. Tôi hỗ trợ các tình huống pháp lý trong phạm vi hiện được hỗ trợ.'],
+    ['tôi là ai', 'Tôi chưa biết danh tính của bạn. Tôi chỉ biết những thông tin bạn đã chủ động cung cấp.'],
+    ['bạn nhớ gì về tôi', 'Tôi chưa ghi nhận thông tin nào về bạn trong cuộc trò chuyện này hiện tại.'],
+  ])('reveals the answer to %s progressively, ending exactly at the source text', async (message, fullText) => {
     const { analyze } = apiMocks();
-    analyze.mockResolvedValue(makeNonLegalResponse(kind, summary));
+    analyze.mockResolvedValue(makeNonLegalResponse('social', fullText));
 
     const { user } = renderApp();
     await waitForComposerReady();
-    await sendViaControls(user, 'xin chào');
+    await sendViaControls(user, message);
 
-    await waitForAssistantText(summary);
-    expect(appBlocks()).toHaveLength(0);
+    // First paint: something appeared, but not yet the whole answer.
+    await waitFor(() => expect(socialTextIn().length).toBeGreaterThan(0));
+    const firstPaint = socialTextIn();
+    expect(firstPaint).not.toBe(fullText);
+    expect(fullText.startsWith(firstPaint)).toBe(true);
+
+    // Every subsequent observed state remains an ordered prefix -- proving
+    // words are appended, never reordered, and never split mid-word (which
+    // would indicate a character-level reveal rather than a word one).
+    let previous = firstPaint;
+    for (let i = 0; i < 50 && socialTextIn() !== fullText; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      const now = socialTextIn();
+      expect(fullText.startsWith(now)).toBe(true);
+      expect(now.length).toBeGreaterThanOrEqual(previous.length);
+      previous = now;
+    }
+
+    await waitFor(() => expect(socialTextIn()).toBe(fullText));
+    // Composer/Send remain usable throughout and after -- the reveal never
+    // touches the send lifecycle, per the existing Phase C guarantee.
+    expect(composerTextarea()).not.toBeDisabled();
+  });
+
+  it('renders a short conversational answer immediately under reduced motion', async () => {
+    setReducedMotion(true);
+    const { analyze } = apiMocks();
+    const fullText = 'Xin chào! Tôi là VietLaw. Tôi có thể hỗ trợ bạn về các tình huống pháp lý.';
+    analyze.mockResolvedValue(makeNonLegalResponse('social', fullText));
+
+    const { user } = renderApp();
+    await waitForComposerReady();
+    await sendViaControls(user, 'hello');
+
+    await waitFor(() => expect(socialTextIn()).toBe(fullText));
     await waitForComposerReady();
   });
 
+  it('cancels the timer for a conversational answer on chat switch', async () => {
+    const { analyze, listChats, getChat } = apiMocks();
+    listChats.mockResolvedValue(makeChatList(['chat-social-b']));
+    getChat.mockResolvedValue(
+      makeChatDetail('chat-social-b', [makeUserMessage('chat-social-b', 'm1', 'Tin nhắn chat B')]),
+    );
+    const fullText = 'Xin chào! Tôi là VietLaw. Tôi có thể hỗ trợ bạn tìm hiểu các tình huống pháp lý hiện có.';
+    analyze.mockResolvedValue({ ...makeNonLegalResponse('social', fullText), chat_id: 'chat-social-a' });
+
+    const { user } = renderApp();
+    await waitForComposerReady();
+    await sendViaControls(user, 'hello');
+    await waitFor(() => expect(socialTextIn().length).toBeGreaterThan(0));
+    expect(socialTextIn()).not.toBe(fullText); // genuinely still revealing
+
+    await user.click(await screen.findByRole('button', { name: /Tiêu đề chat-social-b/ }));
+    await waitFor(() => expect(getChat).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    // Chat A's answer is gone entirely -- nothing leaked into chat B, and
+    // nothing from the abandoned timer wrote into the new chat's tree.
+    expect(document.body.textContent ?? '').not.toContain(fullText);
+    expect(socialTextIn()).toBe('');
+  });
+});
+
+describe('responses that are never word-revealed', () => {
   it('shows a controlled error immediately and keeps the composer usable', async () => {
     const { ApiClientError } = await import('../api/client');
     const { analyze } = apiMocks();
@@ -511,5 +705,102 @@ describe('chat navigation and cleanup', () => {
     const bubble = assistantBubbles()[0];
     expect(bubble.textContent).toContain('Một số thông tin còn thiếu.');
     expect(bubble.querySelector('.analysis-section')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// L-01 correction: the previous reveal must retire the instant a new
+// submission is ACCEPTED, not when the new response eventually arrives.
+//
+// The committed version only updated `animatingAssistantMessageId` after the
+// second response was received, so response A kept its own word-reveal timer
+// running for the entire "thinking" phase of B -- silently, since visually A
+// looked like it was still (correctly) revealing. The "Hiện ngay" skip control
+// is rendered only while a response's own `isRevealing` is true, so its
+// presence/absence is used here as the black-box signal for "is this
+// response's reveal still running" without reaching into React internals.
+// ---------------------------------------------------------------------------
+
+function skipButtonIn(bubble: HTMLElement): HTMLElement | null {
+  return bubble.querySelector('.answer-reveal-skip');
+}
+
+describe('the previous reveal is retired the instant a new submission is accepted', () => {
+  it('makes A fully visible before B resolves, and only B reveals afterward', async () => {
+    const { analyze } = apiMocks();
+    const pendingB = deferred<AnalyzeResponse>();
+    analyze
+      .mockResolvedValueOnce(makeRichResponse({ summary: 'Câu trả lời A.' }))
+      .mockReturnValueOnce(pendingB.promise);
+
+    const { user } = renderApp();
+    await waitForComposerReady();
+    await sendViaControls(user, 'câu hỏi A');
+    await waitForAssistantText('Câu trả lời A.');
+
+    // A must genuinely still be revealing at this point, or the test proves
+    // nothing: assert the skip control -- and therefore `isRevealing` -- is
+    // still present immediately after A's first word appears.
+    const bubbleA = assistantBubbles()[0];
+    expect(skipButtonIn(bubbleA)).not.toBeNull();
+    const partialBlockCount = bubbleA.querySelectorAll('.answer-block').length;
+
+    // Submit B while A is still mid-reveal.
+    await sendViaControls(user, 'câu hỏi B');
+
+    // --- Before B resolves ---
+    // A is fully visible: its own skip control is gone (isRevealing = false,
+    // which the component only sets once every block has fully arrived), its
+    // block count only grew, and the LAST block's complete text (the
+    // uncertainty notice) is present -- not a partial prefix of it, the whole
+    // sentence, which is only possible once every earlier block finished too.
+    expect(skipButtonIn(bubbleA)).toBeNull();
+    expect(bubbleA.querySelectorAll('.answer-block').length).toBeGreaterThanOrEqual(partialBlockCount);
+    expect(bubbleA.textContent).toContain('Câu trả lời A.');
+    expect(bubbleA.textContent).toContain('Một số thông tin còn thiếu.');
+
+    // Request B is genuinely in flight, and nothing has completed for it yet.
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(assistantBubbles()).toHaveLength(1); // no second answer exists yet
+    expect(countUserMessagesWithText('câu hỏi B')).toBe(1);
+
+    // Composer behaves exactly like any other accepted, in-flight request.
+    expect(composerTextarea()).toBeDisabled();
+    expect(composerTextarea().value).toBe('');
+
+    // --- Resolve B ---
+    pendingB.resolve(makeRichResponse({ summary: 'Câu trả lời B.' }));
+    await waitForAssistantText('Câu trả lời B.');
+
+    // Only B reveals: A does not reanimate, and there is no duplicate block
+    // or wrong-message completion callback touching A's now-settled content.
+    expect(skipButtonIn(bubbleA)).toBeNull();
+    expect(bubbleA.textContent).toContain('Câu trả lời A.');
+    expect(assistantBubbles()).toHaveLength(2);
+
+    const bubbleB = assistantBubbles()[1];
+    expect(bubbleB.textContent).toContain('Câu trả lời B.');
+  });
+
+  it('does not retire the previous reveal when a submission is rejected', async () => {
+    const { analyze } = apiMocks();
+    analyze.mockResolvedValueOnce(makeRichResponse({ summary: 'Câu trả lời A.' }));
+
+    const { user } = renderApp();
+    await waitForComposerReady();
+    await sendViaControls(user, 'câu hỏi A');
+    await waitForAssistantText('Câu trả lời A.');
+
+    const bubbleA = assistantBubbles()[0];
+    expect(skipButtonIn(bubbleA)).not.toBeNull();
+
+    // Whitespace-only: refused before dispatch, never accepted.
+    await user.click(composerTextarea());
+    await user.type(composerTextarea(), '    ');
+    await user.keyboard('{Enter}');
+
+    // A's reveal is completely unaffected by a submission that never happened.
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(skipButtonIn(bubbleA)).not.toBeNull();
   });
 });

@@ -277,11 +277,43 @@ describe('restoration falls back safely', () => {
     expect(assistantBubbles()).toHaveLength(0);
   });
 
+  it('rejects a value the old broader validator would have accepted, end to end', async () => {
+    // Uppercase hex matched the committed `[A-Za-z0-9]{8,64}` pattern but is
+    // not a shape this backend's `uuid4().hex` generator can ever produce.
+    const uppercaseLookalike = 'chat_ABCDEF0123456789ABCDEF0123456789';
+    const { getChat } = apiMocks();
+    primeChats([CHAT_A]);
+    window.localStorage.setItem(SELECTED_CHAT_STORAGE_KEY, uppercaseLookalike);
+
+    renderApp();
+    await waitForComposerReady();
+
+    expect(getChat).not.toHaveBeenCalled();
+    expect(storedId()).toBeNull();
+    expect(assistantBubbles()).toHaveLength(0);
+  });
+
+  // M-02 correction: the backend mints ids as `f"chat_{uuid4().hex}"` --
+  // "chat_" plus exactly 32 lowercase hex characters, nothing looser. The
+  // committed validator accepted any mixed-case alphanumeric string of
+  // 8-64 characters, which is broader than anything this backend could ever
+  // issue.
+  it('accepts exactly the shape the backend generates', () => {
+    expect(isValidChatId('chat_0123456789abcdef0123456789abcdef')).toBe(true);
+  });
+
   it.each([
+    ['chat_ZZZZZZZZ', 'too short and not hex'],
+    ['chat_ABCDEF0123456789ABCDEF0123456789', 'uppercase hex'],
+    ['chat_01234567', 'far too short'],
+    ['chat_0123456789abcdef0123456789abcde', '31 chars, one short'],
+    ['chat_0123456789abcdef0123456789abcdef0', '33 chars, one long'],
+    ['wrong_0123456789abcdef0123456789abcdef', 'wrong prefix'],
+    ['chat_gggggggggggggggggggggggggggggggg', 'g is not a hex digit'],
     ['', 'empty'],
-    ['not-a-chat', 'wrong prefix'],
-    ['chat_' + 'x'.repeat(200), 'oversized'],
-  ])('treats %s as invalid (%s)', (value) => {
+    ['not-a-chat', 'no prefix at all'],
+    ['chat_' + 'x'.repeat(200), 'oversized and non-hex'],
+  ])('rejects %s (%s)', (value) => {
     expect(isValidChatId(value)).toBe(false);
   });
 

@@ -58,6 +58,7 @@ from .fast_demo_routing import (
     GREETING_TEXT,
     SCOPE_TEXT,
     UNSAFE_TEXT,
+    USER_IDENTITY_TEXT,
     FastDemoRoute,
     LegalIntent,
     classify_legal_intent,
@@ -180,6 +181,22 @@ class FastDemoOrchestrator:
             return self._direct_response(state, "social", GREETING_TEXT, recent=recent)
         if route is FastDemoRoute.CAPABILITY:
             return self._direct_response(state, "capability", CAPABILITY_TEXT, recent=recent)
+        if route is FastDemoRoute.USER_IDENTITY:
+            # A question about the USER's identity, never about the
+            # assistant's -- must not pretend to recognize the user and must
+            # not be routed to the rental-deposit intake template.
+            return self._direct_response(
+                state, "social", USER_IDENTITY_TEXT, recent=recent, route_label="user_identity",
+            )
+        if route is FastDemoRoute.MEMORY:
+            # Answered only from facts already accepted into THIS chat's
+            # state (the same `_known_facts` the fallback copy uses) -- never
+            # invented, never claiming cross-chat or long-term memory, and
+            # never routed to the rental-deposit intake template.
+            text = _memory_response_text(_known_facts(loaded.state))
+            return self._direct_response(
+                state, "social", text, recent=recent, route_label="memory",
+            )
         if route is FastDemoRoute.ACKNOWLEDGMENT:
             text = ACKNOWLEDGMENT_TEXT_WITH_MATTER if has_active_matter else ACKNOWLEDGMENT_TEXT
             return self._direct_response(state, "social", text, recent=recent)
@@ -383,9 +400,20 @@ class FastDemoOrchestrator:
         *,
         unsafe: bool = False,
         recent: RecentMatter = NO_MATTER,
+        route_label: str | None = None,
     ) -> AnalyzeResponse:
         """social / capability / scope: zero provider calls and, structurally,
-        no domain, risk, decision, confidence or sources."""
+        no domain, risk, decision, confidence or sources.
+
+        ``kind`` must be one of the API contract's actual ``response_kind``
+        values (legal/social/capability/scope) -- it is never extended just to
+        give a new bounded route its own literal, since that would widen the
+        public response schema. ``route_label`` is the free-form value that
+        goes into ``metadata.fast_demo_route`` instead, for test/log
+        introspection of routes (like ``user_identity``/``memory``) that are
+        semantically distinct but structurally identical to one of the four
+        real kinds. Defaults to ``kind`` when the two happen to coincide.
+        """
 
         return AnalyzeResponse(
             response_kind=kind,  # type: ignore[arg-type]
@@ -404,7 +432,9 @@ class FastDemoOrchestrator:
             sources=[],
             safety_notice="",
             confidence=None,
-            metadata=_metadata(route=kind, mode=None, extra={"unsafe": unsafe}, recent=recent),
+            metadata=_metadata(
+                route=route_label or kind, mode=None, extra={"unsafe": unsafe}, recent=recent
+            ),
         )
 
     def _fallback_response(
@@ -801,6 +831,21 @@ def _known_facts(state: FastDemoState) -> list[str]:
     if facts.landlord_refusal_reason and not is_reserved_sentinel(facts.landlord_refusal_reason):
         lines.append(f"Lý do chủ nhà đưa ra: {facts.landlord_refusal_reason}")
     return lines
+
+
+def _memory_response_text(known: list[str]) -> str:
+    """Reply to "bạn nhớ gì về tôi" -- from accepted facts in THIS chat only.
+
+    Reuses ``_known_facts``'s output verbatim rather than re-deriving it, so
+    this can never drift from what the fallback copy already discloses as
+    accepted. Never invents identity, never claims memory beyond the current
+    chat, and never falls back to the rental-deposit intake template.
+    """
+
+    if not known:
+        return "Tôi chưa ghi nhận thông tin nào về bạn trong cuộc trò chuyện này."
+    lines = "\n".join(f"- {item}" for item in known)
+    return "Trong cuộc trò chuyện này, tôi đã ghi nhận:\n" + lines
 
 
 def _metadata(
