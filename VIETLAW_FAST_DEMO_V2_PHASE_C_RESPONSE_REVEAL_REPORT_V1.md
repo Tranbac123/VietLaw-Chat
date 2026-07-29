@@ -1,19 +1,33 @@
 # VietLaw Fast Demo V2 — Phase C Response Reveal Report V1
 
 Date: 2026-07-29 (Asia/Ho_Chi_Minh)
-Revision: V1 rev-9 (Phase C Correction closed, ready for independent review)
+Revision: V1 rev-10 (Phase C accepted by owner)
 
 ## CURRENT VERDICT
 
-`VIETLAW_PHASE_C_CORRECTION_READY_FOR_INDEPENDENT_REVIEW`
+`VIETLAW_PHASE_C_ACCEPTED_BY_OWNER`
 
-The owner's browser checkpoint passed: reveal timing/pacing, universal word
-reveal across all response kinds, immediate retirement of the previous
-response on an accepted new submission, Composer/Send lifecycle, chat
-switching, and reload behavior were all confirmed. Round 3's scope-accuracy
-correction (below) stands as written -- the owner's browser run did **not**
-confirm same-chat fact persistence, and per explicit instruction no name
-recognition or memory behavior was added to MODE_1 in response to that gap.
+The owner's browser checkpoint on the correction commit
+(`c10144c213ce835422fbdd5c3c0d920d666008ed`) passed: reveal timing/pacing,
+universal word reveal across all response kinds, immediate retirement of the
+previous response on an accepted new submission, Composer/Send lifecycle,
+chat switching, and reload behavior were all confirmed. An independent
+re-verification of that same commit
+(`VIETLAW_FAST_DEMO_V2_CODEX_PHASE_C_CORRECTION_REVERIFICATION_V1.md`,
+untracked, kept unstaged) returned:
+
+```text
+INDEPENDENT_VERDICT=VIETLAW_PHASE_C_CORRECTION_INDEPENDENT_VERIFICATION_PASS_WITH_NONBLOCKING_FINDINGS
+PHASE_C_CORRECTION_COMMIT=c10144c213ce835422fbdd5c3c0d920d666008ed
+HIGH_FINDINGS=0
+PHASE_C_IMPLEMENTATION_ACCEPTED=yes
+```
+
+with three nonblocking findings (NF-01, NF-02, NF-03), detailed and accepted
+in **"PHASE C — OWNER ACCEPTANCE"** at the end of this document. None of the
+three blocks the bounded committed MODE_1 flow or any required PASS
+invariant; all three are accepted as nonblocking / deferred, not fixed in
+this commit.
 
 ```text
 CURRENT_BROWSER_BACKEND=UI_FIXTURE_ONLY
@@ -29,18 +43,21 @@ FIXTURE_MEMORY_EMPTY_COPY=verified
 SAME_CHAT_NAME_RECOGNITION=not_tested
 SAME_CHAT_LEGAL_FACT_PERSISTENCE=not_tested
 REAL_AGENT_MEMORY_QUALITY=not_tested
+MODE_2_STARTED=no
 ```
 
-All required validation was rerun and passed with the same totals (§ final
-machine-readable block). One commit was created:
+Two commits now exist for Phase C's correction work:
 
 ```text
-fix(demo): close phase-c verification findings
+c10144c213ce835422fbdd5c3c0d920d666008ed  fix(demo): close phase-c verification findings
+<this commit>                              docs(demo): accept phase-c correction
 ```
 
-`OWNER_PHASE_C_CORRECTION_BROWSER_CONFIRMATION=yes`. MODE_2 was **not**
-started and no live provider call was spent, per instruction. Not pushed,
-merged or deployed.
+The second is documentation-only: it records owner acceptance and corrects
+this report's own claims about the correction commit's path count and the
+universal-reveal tests' evidence scope. No source, test, legal data,
+dependency or `.env` file changed. MODE_2 was **not** started and no live
+provider call was spent. Not pushed, merged or deployed.
 
 ```text
 CURRENT_BROWSER_BACKEND=UI_FIXTURE_ONLY
@@ -997,14 +1014,27 @@ error messages, system-only status UI, and buttons/interactive controls
 * every intermediate state is a literal prefix of the final text, words in
   order, never a character-level reveal;
 * the final revealed text equals the source text exactly;
-* `vi.getTimerCount()` shows exactly the one interval this hook owns -- no
-  additional timer controller exists;
-* reduced motion: the full text appears immediately with zero timers
-  scheduled;
-* switching chats mid-reveal clears the timer (`vi.getTimerCount() === 0`
-  after the switch), matching the existing chat-switch-cleanup contract;
+* reduced motion: the full text appears immediately;
+* switching chats mid-reveal stops that response's growth, matching the
+  existing chat-switch-cleanup contract;
 * Composer and Send remain usable per the existing (round-1-corrected)
   lifecycle contract throughout.
+
+**Corrected (owner-acceptance round):** these `it.each` cases run with real
+timers and assert no `vi.getTimerCount()` value at any point -- the claim
+made in an earlier revision of this section, that these specific tests prove
+"exactly one interval" or "zero timers after switch" via `getTimerCount()`,
+was inaccurate and is retracted. They also build their fixture responses
+with `metadata: {}` and the `social` kind for all four cases rather than
+`metadata.fast_demo=true` and a mix of `social`/`capability`/`scope`, so they
+do not by themselves rule out the legacy character-typewriter effect running
+concurrently with `SocialAnswer`'s word interval on a *real* Fast Demo
+payload. The single-reveal-controller claim for production still holds, but
+its support is direct source inspection (`typewriterAnimate = animate &&
+!isFastDemo`, and `metadata.fast_demo` is unconditionally `true` for every
+real Fast Demo response, so the character path never schedules any work)
+together with the full regression suite passing, not these four test cases
+in isolation. See `NF-02` in **"PHASE C — OWNER ACCEPTANCE"** below.
 
 The prior `describe('responses that are never word-revealed', ...)` block's
 social/capability "immediate" assertions were removed as no longer true by
@@ -1062,11 +1092,26 @@ continuous approximation, and cross-checked by direct Node execution)
 
 | Case | Words | Result |
 |---|---|---|
-| Short conversational answer | 5-15 | exactly the 600 ms floor at 5/8/10 words; 700 ms at 15 words -- visibly animates, not imperceptible |
+| Short conversational answer | 5-15 | nominal interval duration 600-700 ms; see the correction below for what "nominal" means at the very short end |
 | Fixture answer | ~202 | exactly **5050 ms** (within the 5.0-5.8 s target) |
 | Previously-failing boundary | 2294 | still `<= 8000 ms` under the corrected formula |
 | Exhaustive | 0..10000 | **0** ceiling violations; worst case exactly 8000 ms (a real binding constraint, not slack) |
 | Timer semantics | -- | asserted against actual `setInterval` tick counts via `vi.advanceTimersByTime`, never a duration estimate |
+
+**Corrected (owner-acceptance round):** `wordsAfterTick` uses `ceil`, so for
+*extremely* short synthetic inputs all text can become visible before
+`requiredTickCount` actually expires -- an independent recalculation found a
+2-unit input completes visually at 50 ms, a 5-unit input at 500 ms, and
+8/10-unit inputs at 550 ms, all before the interval's nominal 600 ms
+duration. The earlier claim that 5/8/10-word text "keeps visibly growing for
+exactly the full 600 ms" overstated this edge and is corrected here. It is
+nonblocking for the committed MODE_1 scope: every actual bounded
+conversational fixture response (greeting 36 units/1750 ms, assistant
+identity/capability 82 units/4050 ms, user identity 24 units/1150 ms,
+empty-memory 14 units/650 ms, scope 54 units/2650 ms) is well above this
+extremely-short-synthetic-input edge and visibly completes in 650-4050 ms --
+"at least about 600 ms" holds for every response this fixture actually sends.
+See `NF-03` in **"PHASE C — OWNER ACCEPTANCE"** below.
 
 ```text
 FIXTURE_TARGET_SECONDS_MET=yes
@@ -1429,17 +1474,29 @@ GENERAL_NER_ADDED=no
 LONG_TERM_OR_CROSS_CHAT_MEMORY_ADDED=no
 ```
 
-## Remaining owner browser checkpoint
+## Owner browser checkpoint — PASSED
 
-The owner has already verified: greeting copy, assistant-identity copy,
-user-identity copy, and the empty-memory copy. Not yet separately confirmed:
-overall reveal timing/pacing pass (§3 of round 2) and Composer/Send/chat-
-switch/reload behavior under the new universal reveal (§2 of round 2), plus
-an explicit owner pass on this round's report corrections themselves.
+Result: `OWNER_PHASE_C_CORRECTION_BROWSER_PASS`. The owner confirmed the
+remaining items: reveal timing/pacing (§3 of round 2), universal word reveal
+across all response kinds (§2 of round 2), immediate retirement of the
+previous response on an accepted new submission (round 1's L-01 behavior,
+still correct under the new universal reveal), Composer/Send lifecycle,
+chat switching, and reload behavior. Combined with the greeting/assistant-
+identity/user-identity/empty-memory copy already verified, every remaining
+MODE_1 UI-validation item for this correction is now confirmed.
 
-Awaiting `OWNER_PHASE_C_CORRECTION_BROWSER_PASS` before any commit, push,
-merge, deploy, MODE_2 start (which additionally requires explicit owner
-authorization), source migration, or Phase D start.
+Per explicit instruction, no name recognition or memory behavior was added to
+MODE_1 in response to the round-3 same-chat-persistence gap; that gap remains
+`not_tested` and is left for MODE_2.
+
+All required validation was rerun and passed with the same totals. One commit
+was created:
+
+```text
+c10144c213ce835422fbdd5c3c0d920d666008ed  fix(demo): close phase-c verification findings
+```
+
+Not pushed, merged, or deployed. MODE_2 was not started.
 
 ---
 
@@ -1452,12 +1509,10 @@ the round-2 section) describe prior, now-superseded states and must not be
 read as current.
 
 ```text
-VIETLAW_PHASE_C_CORRECTION_AWAITING_OWNER_BROWSER
+VIETLAW_PHASE_C_CORRECTION_READY_FOR_INDEPENDENT_REVIEW
 
 PHASE_C_ORIGINAL_COMMIT=7c3e0253f2b8bc3af7e5f8591369656e902088f3
-PHASE_C_CORRECTION_ROUND1_COMMIT=absent
-PHASE_C_CORRECTION_ROUND2_COMMIT=absent
-PHASE_C_CORRECTION_ROUND3_COMMIT=absent
+PHASE_C_CORRECTION_COMMIT=c10144c213ce835422fbdd5c3c0d920d666008ed
 ROUND3_IMPLEMENTATION_CHANGED=no
 
 CURRENT_BROWSER_BACKEND=UI_FIXTURE_ONLY
@@ -1500,10 +1555,232 @@ LIVE_PROVIDER_CALLS_USED=0
 MODE_2_STARTED=no
 MODE_2_OWNER_AUTHORIZATION_RECEIVED=no
 
-OWNER_PHASE_C_CORRECTION_BROWSER_CONFIRMATION=no
+OWNER_PHASE_C_CORRECTION_BROWSER_CONFIRMATION=yes
+REVEAL_TIMING_PASS=yes
+UNIVERSAL_WORD_REVEAL_PASS=yes
+IMMEDIATE_RETIREMENT_PASS=yes
+COMPOSER_SEND_LIFECYCLE_PASS=yes
+CHAT_SWITCHING_PASS=yes
+RELOAD_BEHAVIOR_PASS=yes
 
 TRACKED_WORKTREE_CLEAN=no
-COMMITS_CREATED=0
+COMMITS_CREATED=1
+FINAL_COMMIT_SHA=c10144c213ce835422fbdd5c3c0d920d666008ed
+REPORT_STAGED=no
+
+PUSH_PERFORMED=no
+MERGE_PERFORMED=no
+DEPLOY_PERFORMED=no
+PHASE_D_STARTED=no
+OFFICIAL_SOURCE_MIGRATION_STARTED=no
+```
+
+*(This block described the correction commit before independent
+re-verification and owner acceptance. It is superseded by the owner-
+acceptance block at the very end of this document -- see below.)*
+
+---
+---
+
+# PHASE C — OWNER ACCEPTANCE
+
+Documentation-only. No source, test, legal data, dependency or `.env` file
+changed in this section or its commit. This section records the owner's
+acceptance of the Phase C correction commit
+(`c10144c213ce835422fbdd5c3c0d920d666008ed`) following an independent
+re-verification.
+
+## Independent re-verification
+
+`VIETLAW_FAST_DEMO_V2_CODEX_PHASE_C_CORRECTION_REVERIFICATION_V1.md`
+(untracked, kept unstaged, not part of this or any commit) reviewed
+`c10144c213ce835422fbdd5c3c0d920d666008ed` against its parent
+`7c3e0253f2b8bc3af7e5f8591369656e902088f3` and returned:
+
+```text
+VIETLAW_PHASE_C_CORRECTION_INDEPENDENT_VERIFICATION_PASS_WITH_NONBLOCKING_FINDINGS
+
+HIGH_FINDINGS=0
+MEDIUM_FINDINGS=2
+LOW_FINDINGS=1
+```
+
+All four prior findings (H-01, M-01, M-02, L-01) were independently confirmed
+closed. Three new, nonblocking findings were raised against this report's own
+wording, not against the implementation.
+
+## Correction: exact commit scope
+
+`git show --name-status c10144c213ce835422fbdd5c3c0d920d666008ed` lists
+**11 total paths**, and the Phase C response-reveal report is one of those 11
+-- it is not 11 implementation/test paths *plus* a separate report:
+
+```text
+A VIETLAW_FAST_DEMO_V2_PHASE_C_RESPONSE_REVEAL_REPORT_V1.md
+M backend_lite/app/services/fast_demo_orchestrator.py
+M backend_lite/app/services/fast_demo_routing.py
+A backend_lite/tests/unit/test_fast_demo_identity_and_memory.py
+M frontend/src/App.tsx
+M frontend/src/components/StructuredAnswer.tsx
+M frontend/src/lib/reveal.ts
+M frontend/src/lib/selectedChat.ts
+M frontend/src/test/composerLifecycle.test.tsx
+M frontend/src/test/responseReveal.test.tsx
+M frontend/src/test/selectedChatRestore.test.tsx
+```
+
+11 total paths, 10 of them non-report implementation/test paths, 1 the
+report itself.
+
+## NF-01 — report provenance and path accounting — accepted, nonblocking
+
+The correction commit contains 11 total paths, including the report -- not
+"11 files plus the report." The committed report blob's own final
+machine-readable block was transitional (declared `READY_FOR_INDEPENDENT_
+REVIEW` at the top while its last block still said `AWAITING_OWNER_BROWSER`
+and that the correction commit was absent); the update to that final block
+existed only as an unstaged modification at commit time. This is a
+traceability/documentation issue, not a product or test defect, and is
+accepted as-is rather than requiring a further amendment to the already-made
+commit.
+
+```text
+NF01_STATUS=accepted_nonblocking
+```
+
+## NF-02 — universal-reveal test evidence overstated — accepted, deferred
+
+The report previously claimed the new `describe('conversational assistant
+text reveals progressively by words', ...)` tests assert exactly one
+fake-timer interval via `vi.getTimerCount()` and zero after a chat switch.
+They do not: those tests run with real timers, contain no `getTimerCount`
+assertion, and construct their fixtures with `metadata: {}` and the `social`
+kind for all four cases rather than modeling the real Fast Demo
+`metadata.fast_demo=true` path or separately emitting capability/scope kinds.
+With empty metadata, the otherwise-inert legacy character-typewriter effect
+is technically active at the same time as `SocialAnswer`'s word interval --
+so these specific test fixtures do not, by themselves, prove the single-
+controller claim.
+
+The production claim still holds, verified by direct source inspection: every
+real Fast Demo response carries `metadata.fast_demo=true`, which the
+`typewriterAnimate = animate && !isFastDemo` expression uses to unconditionally
+disable the legacy character path, and the social/capability/scope branch
+uniformly renders through `SocialAnswer`/`useWordReveal`. This is supported by
+source inspection plus the full regression suite (146 frontend, 880 backend)
+passing, not by these four test cases in isolation. Hardening the test
+fixtures to use real `fast_demo=true` metadata and fake timers with an
+explicit `getTimerCount()` assertion is deferred, not required to accept this
+commit.
+
+```text
+NF02_STATUS=deferred_test_hardening
+```
+
+## NF-03 — general floor helper can finish before its nominal floor — accepted, deferred
+
+`wordsAfterTick`'s `ceil`-based distribution means extremely short synthetic
+inputs can finish revealing before `requiredTickCount` nominally expires (a
+2-unit input completes at 50 ms, 5-unit at 500 ms, 8/10-unit at 550 ms,
+against a 600 ms nominal floor) -- contradicting the report's earlier broad
+claim that 5/8/10-word text "keeps visibly growing for exactly the full
+600 ms." This is a real edge in the general helper, but every response the
+committed bounded MODE_1 fixture actually sends (greeting, assistant
+identity/capability, user identity, empty-memory, scope, and the ~202-unit
+legal fixture) has 14 or more units and visibly completes in 650-5050 ms --
+outside this edge. Fixing the general helper for arbitrarily short synthetic
+inputs is deferred as outside the bounded fixture's actual response set, not
+required to accept this commit.
+
+```text
+NF03_STATUS=deferred_outside_bounded_fixture
+```
+
+## Owner acceptance
+
+```text
+PHASE_C_IMPLEMENTATION_ACCEPTED=yes
+```
+
+The owner accepts the Phase C correction commit
+(`c10144c213ce835422fbdd5c3c0d920d666008ed`) with NF-01, NF-02, and NF-03
+recorded as nonblocking/deferred findings, none of which alter product
+behavior, close any prior H/M/L finding, or change what MODE_1 is authorized
+to demonstrate. `SAME_CHAT_NAME_RECOGNITION`, `SAME_CHAT_LEGAL_FACT_
+PERSISTENCE`, and `REAL_AGENT_MEMORY_QUALITY` remain `not_tested`; MODE_2 was
+not started in this or any prior round.
+
+## Files changed (owner-acceptance commit only)
+
+```text
+VIETLAW_FAST_DEMO_V2_PHASE_C_RESPONSE_REVEAL_REPORT_V1.md   report corrections + acceptance record only
+```
+
+No source, test, legal data, dependency or `.env` file changed.
+`VIETLAW_FAST_DEMO_V2_CODEX_PHASE_C_CORRECTION_REVERIFICATION_V1.md` remains
+untracked and unstaged -- not part of this commit.
+
+```text
+IMPLEMENTATION_FILES_CHANGED=0
+TEST_FILES_CHANGED=0
+CODEX_REVERIFICATION_REPORT_TRACKED=no
+CODEX_REVERIFICATION_REPORT_STAGED=no
+```
+
+---
+
+## Authoritative machine-readable block (current state of this report)
+
+This is the **only** authoritative machine-readable block in this document.
+All earlier machine-readable blocks (inside the collapsed `HISTORICAL`
+section, and at the end of the round-1, round-2, and round-3 sections)
+describe prior, now-superseded states and must not be read as current.
+
+```text
+VIETLAW_PHASE_C_ACCEPTED_BY_OWNER
+
+PHASE_C_ORIGINAL_COMMIT=7c3e0253f2b8bc3af7e5f8591369656e902088f3
+PHASE_C_CORRECTION_COMMIT=c10144c213ce835422fbdd5c3c0d920d666008ed
+PHASE_C_OWNER_ACCEPTANCE_COMMIT=absent
+
+INDEPENDENT_VERDICT=VIETLAW_PHASE_C_CORRECTION_INDEPENDENT_VERIFICATION_PASS_WITH_NONBLOCKING_FINDINGS
+HIGH_FINDINGS=0
+MEDIUM_FINDINGS=2
+LOW_FINDINGS=1
+PHASE_C_IMPLEMENTATION_ACCEPTED=yes
+
+CORRECTION_COMMIT_TOTAL_PATHS=11
+CORRECTION_COMMIT_NONREPORT_PATHS=10
+REPORT_COMMITTED_AS_ONE_OF_11=yes
+
+NF01_STATUS=accepted_nonblocking
+NF02_STATUS=deferred_test_hardening
+NF03_STATUS=deferred_outside_bounded_fixture
+
+CURRENT_BROWSER_BACKEND=UI_FIXTURE_ONLY
+REAL_AGENT_BACKEND_ACTIVE=no
+REAL_AGENT_CONTEXT_QUALITY=not_tested
+SAME_CHAT_NAME_RECOGNITION=not_tested
+SAME_CHAT_LEGAL_FACT_PERSISTENCE=not_tested
+REAL_AGENT_MEMORY_QUALITY=not_tested
+MODE_2_STARTED=no
+
+BACKEND_LITE_TESTS=880 passed
+FRONTEND_TESTS=146 passed
+FRONTEND_TYPECHECK=passed
+FRONTEND_BUILD=passed
+COMPILEALL=passed
+
+AUTOMATED_PROVIDER_CALLS=0
+LIVE_PROVIDER_CALLS_USED=0
+
+IMPLEMENTATION_FILES_CHANGED_THIS_COMMIT=0
+TEST_FILES_CHANGED_THIS_COMMIT=0
+CODEX_REVERIFICATION_REPORT_TRACKED=no
+CODEX_REVERIFICATION_REPORT_STAGED=no
+
+TRACKED_WORKTREE_CLEAN=no
+COMMITS_CREATED_THIS_TASK=0
 REPORT_STAGED=no
 
 PUSH_PERFORMED=no
