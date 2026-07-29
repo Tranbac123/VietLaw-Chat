@@ -159,8 +159,11 @@ describe('a submission refused before dispatch', () => {
   });
 
   it('preserves a draft typed while the answer is still revealing', async () => {
-    // During "revealing" the input is enabled but submit is refused: this is the
-    // one reachable state where a non-empty draft meets a refused submission.
+    // Phase C decoupled the reveal from the request lifecycle, so submitting
+    // during a reveal is now *allowed* rather than refused. What still has to
+    // hold either way is that typing during a reveal is never discarded, which
+    // is what this asserts; the branch below covers the refusal case if the
+    // composer happens to be busy at that instant.
     const { analyze } = apiMocks();
     analyze.mockResolvedValueOnce(
       makeAnalyzeResponse({ summary: 'Câu trả lời dài. '.repeat(40) }),

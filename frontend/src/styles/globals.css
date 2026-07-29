@@ -328,6 +328,15 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, a:focus-visi
   font-weight: 700;
   line-height: var(--answer-heading-leading);
 }
+/* Staged top-to-bottom reveal. Presentation only: a block that never reaches
+   `--revealed` hides content but can never disable the composer or Send. */
+.answer-block { opacity: 0; transform: translateY(4px); transition: opacity 200ms ease-out, transform 200ms ease-out; }
+.answer-block--revealed { opacity: 1; transform: none; }
+/* Reduced motion: no transition at all, and every block is already marked
+   revealed by the hook, so nothing depends on a transition ever firing. */
+@media (prefers-reduced-motion: reduce) {
+  .answer-block { opacity: 1; transform: none; transition: none; }
+}
 .typewriter-cursor { display: inline-block; margin-left: 1px; color: var(--brand); animation: typewriter-cursor-blink 850ms steps(1, end) infinite; }
 @keyframes typewriter-cursor-blink { 50% { opacity: 0; } }
 .answer-section { margin-top: 18px; padding-top: 18px; border-top: 1px solid #e2ebe6; }

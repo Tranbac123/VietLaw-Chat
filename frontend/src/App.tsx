@@ -6,6 +6,11 @@ import { ChatWindow } from './components/ChatWindow';
 import { Composer } from './components/Composer';
 import { Sidebar } from './components/Sidebar';
 import { MIN_THINKING_MS } from './lib/animation';
+import {
+  clearSelectedChatId,
+  readSelectedChatId,
+  writeSelectedChatId,
+} from './lib/selectedChat';
 import { getOrCreateSessionId } from './lib/session';
 
 type AssistantResponsePhase = 'idle' | 'thinking' | 'revealing';
@@ -113,6 +118,12 @@ export function App() {
   const [selectedUserType, setSelectedUserType] = useState<UserType>('citizen');
   const [loadingChat, setLoadingChat] = useState(false);
   const [loadingChats, setLoadingChats] = useState(true);
+  // Explicit restoration phase. Until it resolves the app must not create a
+  // chat, dispatch a request or run a reveal -- otherwise the user briefly
+  // lands in New Chat and the real chat snaps in afterwards.
+  const [restoringSelectedChat, setRestoringSelectedChat] = useState(true);
+  const [chatListUnavailable, setChatListUnavailable] = useState(false);
+  const restoreAttemptedRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [failedSubmission, setFailedSubmission] = useState<Resubmission | null>(null);
   const [assistantResponsePhase, setAssistantResponsePhase] = useState<AssistantResponsePhase>('idle');
@@ -146,8 +157,12 @@ export function App() {
     try {
       const response = await listChats(sessionId);
       setChats(response.chats);
+      setChatListUnavailable(false);
     } catch (caughtError) {
       setChats([]);
+      // The list is the ownership oracle for restoration; if it did not load we
+      // must not conclude that a remembered chat is stale.
+      setChatListUnavailable(true);
       setError(messageFromError(caughtError));
     } finally {
       setLoadingChats(false);
@@ -172,7 +187,10 @@ export function App() {
     // A retry stays bound to the chat it was originally dispatched against;
     // only a fresh submission follows the currently selected chat.
     const targetChatId = resubmission ? resubmission.chatId : activeChatId;
-    if (assistantResponsePhase !== 'idle' || loadingChat) return false;
+    // A still-revealing previous answer must not refuse a new submission; only
+    // a request genuinely in flight does. Bumping the generation below retires
+    // the old reveal, which is presentation-only and safe to abandon.
+    if (assistantResponsePhase === 'thinking' || loadingChat) return false;
 
     const generation = responseGenerationRef.current + 1;
     responseGenerationRef.current = generation;
@@ -257,6 +275,7 @@ export function App() {
       };
 
       setActiveChatId(response.chat_id);
+      writeSelectedChatId(response.chat_id);
       setMessages((currentMessages) => [
         ...currentMessages.map((message) => (
           message.message_id === temporaryUserMessageId ? userMessage : message
@@ -316,6 +335,7 @@ export function App() {
     try {
       const response = await getChat(chatId, sessionId);
       setActiveChatId(response.chat_id);
+      writeSelectedChatId(response.chat_id);
       setMessages(response.messages);
     } catch (caughtError) {
       setError(messageFromError(caughtError));
@@ -327,11 +347,45 @@ export function App() {
   function startNewChat() {
     if (loadingChat) return;
     cancelResponseFlow();
+    // An explicit New Chat is a deliberate choice to start fresh, so a later
+    // reload must stay on New Chat rather than resurrecting the old chat.
+    clearSelectedChatId();
     setActiveChatId(null);
     setMessages([]);
     setError(null);
     setFailedSubmission(null);
   }
+
+  // Restore the previously selected chat exactly once, and only after the
+  // session-scoped chat list has arrived. Waiting is what prevents the flash
+  // where New Chat renders first and the real chat snaps in afterwards.
+  //
+  // Membership in that list IS the ownership check: the backend built it for
+  // this session, so an id belonging to someone else can never be restored. A
+  // stored id is never treated as authorization on its own.
+  useEffect(() => {
+    if (restoreAttemptedRef.current || loadingChats) return;
+    restoreAttemptedRef.current = true;
+
+    const stored = readSelectedChatId();
+    if (!stored) {
+      setRestoringSelectedChat(false);
+      return;
+    }
+    if (chatListUnavailable) {
+      // The list failed to load, so "not in the list" proves nothing. Keep the
+      // id for the next attempt rather than discarding a valid selection.
+      setRestoringSelectedChat(false);
+      return;
+    }
+    if (!chats.some((chat) => chat.chat_id === stored)) {
+      // Deleted, inaccessible to this session, or otherwise stale.
+      clearSelectedChatId();
+      setRestoringSelectedChat(false);
+      return;
+    }
+    void openChat(stored).finally(() => setRestoringSelectedChat(false));
+  }, [chatListUnavailable, chats, loadingChats, openChat]);
 
   const handleAnimationComplete = useCallback((messageId: string) => {
     if (animatingAssistantMessageIdRef.current !== messageId) return;
@@ -342,9 +396,17 @@ export function App() {
     ));
   }, []);
 
-  const controlsDisabled = assistantResponsePhase !== 'idle' || loadingChat;
-  const composerInputDisabled = assistantResponsePhase === 'thinking' || loadingChat;
-  const composerSubmitDisabled = assistantResponsePhase !== 'idle' || loadingChat;
+  // Only a request actually in flight ('thinking') may disable anything. The
+  // 'revealing' phase is presentation, so it must never gate Send, the chat
+  // controls or the next submission -- gating on `!== 'idle'` is precisely what
+  // once left Send permanently disabled when a reveal failed to finish.
+  const requestInFlight = assistantResponsePhase === 'thinking';
+  // Restoration is a brief startup phase, never a permanent state: it always
+  // resolves in the effect above, including on the error paths.
+  const busy = requestInFlight || loadingChat || restoringSelectedChat;
+  const controlsDisabled = busy;
+  const composerInputDisabled = busy;
+  const composerSubmitDisabled = busy;
   const isEmptyChat = messages.length === 0;
   const hasStartedConversation = !isEmptyChat || assistantResponsePhase !== 'idle';
   const showLanding = !hasStartedConversation;
