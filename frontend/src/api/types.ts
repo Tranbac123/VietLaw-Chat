@@ -33,6 +33,16 @@ export interface SourceObject {
   snippet: string;
   source_type: SourceType;
   last_checked: string;
+  /** Article-level legal citation metadata (MODE_2D). Present only for the
+   * bounded Civil Code sources with curated article-level data; absent/null
+   * for every other source, which falls back to the generic display. */
+  document_title?: string | null;
+  document_number?: string | null;
+  article_number?: string | null;
+  article_title?: string | null;
+  clause_numbers?: number[];
+  applicable_clause?: number | null;
+  relevance_note?: string | null;
 }
 
 export interface Confidence {

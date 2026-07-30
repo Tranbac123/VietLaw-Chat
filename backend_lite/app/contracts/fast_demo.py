@@ -37,6 +37,16 @@ MAX_RECENT_REQUESTS = 8
 
 TriState = Literal["present", "absent", "unknown"]
 
+# MODE_2D correction (M-01): a matured refusal/nonperformance conclusion is a
+# distinct legal question from the generic tri-state "is the property handed
+# over / is the deposit returned" facts -- neither of those, by itself,
+# establishes that the receiving party refused or failed a due obligation.
+# Kept as its own three-value type (not TriState's present/absent) so the
+# field name and its values stay self-describing at every call site, rather
+# than overloading "present"/"absent" to mean something slot-specific here.
+NonperformanceStatus = Literal["unknown", "confirmed", "not_confirmed"]
+RECEIVING_PARTY_NONPERFORMANCE_SLOT = "receiving_party_nonperformance_status"
+
 ResponseMode = Literal[
     "acknowledge",
     "clarify",
@@ -70,6 +80,7 @@ ALLOWED_SLOTS: frozenset[str] = TRI_STATE_SLOTS | {
     "payment_evidence_types",
     "landlord_refusal_reason",
     "user_goal",
+    RECEIVING_PARTY_NONPERFORMANCE_SLOT,
 }
 
 ALLOWED_EVIDENCE_TYPES: frozenset[str] = frozenset(
@@ -107,6 +118,12 @@ class FastDemoFacts(BaseModel):
     written_refund_request_status: TriState = "unknown"
     landlord_response_status: TriState = "unknown"
     landlord_refusal_reason: str | None = None
+    # MODE_2D (M-01): whether the receiving party's refusal or matured
+    # nonperformance is established -- resolved only from a bounded evidence
+    # allowlist (see fast_demo_fact_validation.infer_receiving_party_
+    # nonperformance), never from generic tri-state polarity or from the
+    # model's bare operation flag.
+    receiving_party_nonperformance_status: NonperformanceStatus = "unknown"
 
 
 class DraftRecord(BaseModel):

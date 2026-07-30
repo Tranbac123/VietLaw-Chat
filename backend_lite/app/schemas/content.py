@@ -47,6 +47,19 @@ class SourceObject(BaseModel):
     snippet: str
     source_type: SourceType
     last_checked: str
+    # MODE_2D: article-level legal citation metadata. Optional and additive --
+    # None/empty for every source without curated article-level data (which is
+    # every source outside the bounded Civil Code scope), so this is a wire
+    # contract extension, not a breaking change. Populated only from curated
+    # snippet data and backend-computed clause resolution, never from
+    # model-generated prose (see fast_demo_source_pack.py).
+    document_title: str | None = None
+    document_number: str | None = None
+    article_number: str | None = None
+    article_title: str | None = None
+    clause_numbers: list[int] = Field(default_factory=list)
+    applicable_clause: int | None = None
+    relevance_note: str | None = None
 
 
 class Confidence(BaseModel):

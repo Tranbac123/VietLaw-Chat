@@ -48,6 +48,23 @@ OFFICIAL_SOURCE_BOUNDED_IDS = {
 
 CIVIL_CODE_DOCUMENT_NUMBER = "91/2015/QH13"
 
+#: MODE_2D correction (M-02): the exact, independently-verified legal identity
+#: for every snippet on the article-citation allowlist. `civil_contract_001`/
+#: `civil_contract_002` are deliberately absent -- no verified article number
+#: exists for them yet, so they are left without article-level metadata
+#: rather than assigning an unverified one (see the migration report). Adding
+#: a new bounded snippet later means adding its own verified entry here, not
+#: widening a generic non-empty check.
+ARTICLE_LEVEL_CITATION_IDENTITY: dict[str, dict[str, Any]] = {
+    "civil_deposit_001": {
+        "document_title": "Bộ luật Dân sự 2015",
+        "article_number": "328",
+        "article_title": "Đặt cọc",
+        "clause_numbers": [1, 2],
+    },
+}
+ARTICLE_LEVEL_CITATION_IDS = set(ARTICLE_LEVEL_CITATION_IDENTITY)
+
 ALLOWED_DOMAINS = {
     "civil_dispute",
     "traffic",
@@ -104,7 +121,21 @@ def parse_scalar(value: str) -> str:
     return value
 
 
-def split_inline_list(value: str) -> list[str]:
+def _tokenize_inline_list(value: str, *, keep_empty: bool = False) -> list[tuple[str, bool]]:
+    """Split an inline `[item_one, item_two]` list into (raw_text, was_quoted)
+    pairs. Shared by `split_inline_list` (general fields) and
+    `parse_clause_numbers_strict` (M-02B: the one field that needs to know
+    whether each token was quoted, without changing general-field behavior).
+
+    ``keep_empty`` defaults to `False`, which preserves the exact original
+    behavior every caller other than `parse_clause_numbers_strict` relies on
+    (a stray/duplicate/leading/trailing comma silently produces one fewer
+    item). `parse_clause_numbers_strict` passes `keep_empty=True` so it can
+    see and reject an empty segment itself (M-03: the trailing-comma
+    finding) -- `split_inline_list`'s call site is unchanged and therefore so
+    is its behavior.
+    """
+
     value = value.strip()
     if not (value.startswith("[") and value.endswith("]")):
         raise ValueError("list must use inline form: [item_one, item_two]")
@@ -113,10 +144,16 @@ def split_inline_list(value: str) -> list[str]:
     if not inner:
         return []
 
-    items: list[str] = []
+    tokens: list[tuple[str, bool]] = []
     buf: list[str] = []
     quote: str | None = None
+    was_quoted = False
     escape = False
+
+    def _flush(raw: str) -> None:
+        raw = raw.strip()
+        if raw or keep_empty:
+            tokens.append((raw, was_quoted))
 
     for ch in inner:
         if escape:
@@ -129,25 +166,83 @@ def split_inline_list(value: str) -> list[str]:
         if ch in {"'", '"'}:
             if quote is None:
                 quote = ch
+                was_quoted = True
             elif quote == ch:
                 quote = None
             else:
                 buf.append(ch)
             continue
         if ch == "," and quote is None:
-            item = parse_scalar("".join(buf).strip())
-            if item:
-                items.append(item)
+            _flush("".join(buf))
             buf = []
+            was_quoted = False
             continue
         buf.append(ch)
 
     if quote is not None:
         raise ValueError("unterminated quote in list")
 
-    item = parse_scalar("".join(buf).strip())
-    if item:
-        items.append(item)
+    _flush("".join(buf))
+    return tokens
+
+
+def split_inline_list(value: str) -> list[str]:
+    """General shared inline-list parser (tags, risk_notes, ...).
+
+    Every item is always a plain string, regardless of whether it was quoted
+    in the authoring source -- restored to this original semantics in M-02B
+    after round 2 accidentally made this SHARED parser type-aware, which
+    changed unrelated fields' acceptance of unquoted `true`/`false`/numbers.
+    Only `clause_numbers` needs typed items; see `parse_clause_numbers_strict`.
+    """
+
+    return [parse_scalar(raw) for raw, _ in _tokenize_inline_list(value)]
+
+
+_BARE_INT_RE = re.compile(r"^-?[0-9]+$")
+_BARE_FLOAT_RE = re.compile(r"^-?[0-9]+\.[0-9]+$")
+
+
+def parse_clause_numbers_strict(value: str) -> list[Any]:
+    """Field-specific strict parser for `clause_numbers` only (M-02B/M-03).
+
+    Distinguishes quoted from unquoted tokens using the same raw-text
+    tokenizer as the general list parser, but types ONLY here: an unquoted
+    whole number becomes a real `int`, an unquoted `true`/`false` becomes a
+    real `bool`, an unquoted decimal becomes a real `float`, and every
+    quoted token stays a `str` -- so `require_positive_int_list` can reject
+    anything that is not a genuine `int` without ever coercing a string
+    through `int(str(item))`. General fields (tags, risk_notes, ...) are
+    never routed through this function and keep their original string-only
+    behavior via `split_inline_list`.
+
+    Unlike the shared parser (which silently drops an empty segment from a
+    stray comma), this field's exact accepted grammar admits only genuine
+    items separated by single commas: `[1, 2]` is accepted; a leading,
+    trailing, or doubled comma -- which produces an empty segment -- is
+    rejected outright (M-03), never silently discarded.
+    """
+
+    items: list[Any] = []
+    for raw, was_quoted in _tokenize_inline_list(value, keep_empty=True):
+        if not was_quoted and raw == "":
+            raise ValueError(
+                "clause_numbers must not contain an empty item -- check for "
+                "a leading, trailing, or doubled comma"
+            )
+        if was_quoted:
+            items.append(raw)
+            continue
+        if raw == "true":
+            items.append(True)
+        elif raw == "false":
+            items.append(False)
+        elif _BARE_INT_RE.match(raw):
+            items.append(int(raw))
+        elif _BARE_FLOAT_RE.match(raw):
+            items.append(float(raw))
+        else:
+            items.append(raw)
     return items
 
 
@@ -172,7 +267,13 @@ def parse_frontmatter(frontmatter: str, path: Path) -> dict[str, Any]:
 
         try:
             if value.startswith("["):
-                data[key] = split_inline_list(value)
+                # M-02B: only `clause_numbers` is routed through the typed
+                # parser; every other inline-list field keeps the general
+                # string-only parser unchanged.
+                if key == "clause_numbers":
+                    data[key] = parse_clause_numbers_strict(value)
+                else:
+                    data[key] = split_inline_list(value)
             else:
                 data[key] = parse_scalar(value)
         except ValueError as exc:
@@ -249,6 +350,109 @@ def validate_official_source_metadata(snippet_id: str, meta: dict[str, Any], pat
         )
 
 
+def require_positive_int_list(value: Any, path: Path, field: str) -> list[int]:
+    """Require every item to already be a genuine Python `int` as produced by
+    the parser (M-02, round 2) -- never coerced via `int(str(item))`, which
+    would silently accept a quoted numeric string. `bool` is explicitly
+    excluded even though it subclasses `int` in Python, so an unquoted
+    `true`/`false` is rejected rather than read as `1`/`0`.
+    """
+
+    if not isinstance(value, list) or not value:
+        raise SnippetBuildError(f"{path}: field must be a non-empty list: {field}")
+    cleaned: list[int] = []
+    for item in value:
+        if not isinstance(item, int) or isinstance(item, bool):
+            raise SnippetBuildError(
+                f"{path}: field {field} contains a non-integer item (must be an "
+                f"unquoted whole number, not a string/float/boolean): {item!r}"
+            )
+        if item <= 0:
+            raise SnippetBuildError(f"{path}: field {field} contains a non-positive item: {item!r}")
+        cleaned.append(item)
+    if len(cleaned) != len(set(cleaned)):
+        raise SnippetBuildError(f"{path}: field {field} contains duplicate clause numbers")
+    return cleaned
+
+
+#: The exact frontmatter keys that carry article-level identity. Authoring
+#: any of these on a snippet outside the allowlist is a build error, not a
+#: silently-discarded no-op (MODE_2D correction M-02).
+_ARTICLE_LEVEL_KEYS = ("document_title", "article_number", "article_title", "clause_numbers")
+
+
+def validate_article_level_citation_metadata(
+    snippet_id: str, meta: dict[str, Any], path: Path
+) -> dict[str, Any]:
+    """Bounded article-level legal-citation metadata (MODE_2D), corrected to
+    an exact-identity gate in round 1 (M-02).
+
+    Scoped to `ARTICLE_LEVEL_CITATION_IDENTITY` only. For every other
+    snippet, authoring ANY article-level key is now a hard build error
+    (previously it was silently discarded, which is exactly the gap the
+    independent review found: authoring article-level metadata on the wrong
+    snippet must fail loudly, not vanish quietly). For the one bounded
+    snippet, every field must match its independently-verified value
+    EXACTLY -- not merely be non-empty -- so a typo'd article/clause/
+    document title can never reach a rendered legal citation.
+    """
+
+    if snippet_id not in ARTICLE_LEVEL_CITATION_IDS:
+        authored = [key for key in _ARTICLE_LEVEL_KEYS if key in meta]
+        if authored:
+            raise SnippetBuildError(
+                f"{path}: {snippet_id} is not on the approved article-citation "
+                f"allowlist but authors article-level field(s): {', '.join(authored)}"
+            )
+        return {}
+
+    expected = ARTICLE_LEVEL_CITATION_IDENTITY[snippet_id]
+
+    document_title = require_text(meta.get("document_title", ""), path, "document_title")
+    article_number = require_text(meta.get("article_number", ""), path, "article_number")
+    article_title = require_text(meta.get("article_title", ""), path, "article_title")
+    clause_numbers = require_positive_int_list(meta.get("clause_numbers", []), path, "clause_numbers")
+
+    if document_title != expected["document_title"]:
+        raise SnippetBuildError(
+            f"{path}: {snippet_id}.document_title must be exactly "
+            f"{expected['document_title']!r}, got {document_title!r}"
+        )
+    if article_number != expected["article_number"]:
+        raise SnippetBuildError(
+            f"{path}: {snippet_id}.article_number must be exactly "
+            f"{expected['article_number']!r}, got {article_number!r}"
+        )
+    if article_title != expected["article_title"]:
+        raise SnippetBuildError(
+            f"{path}: {snippet_id}.article_title must be exactly "
+            f"{expected['article_title']!r}, got {article_title!r}"
+        )
+    if clause_numbers != sorted(clause_numbers):
+        raise SnippetBuildError(
+            f"{path}: {snippet_id}.clause_numbers must be sorted ascending, got {clause_numbers!r}"
+        )
+    if clause_numbers != expected["clause_numbers"]:
+        raise SnippetBuildError(
+            f"{path}: {snippet_id}.clause_numbers must be exactly "
+            f"{expected['clause_numbers']!r}, got {clause_numbers!r}"
+        )
+
+    # document_number is already validated exactly equal to
+    # CIVIL_CODE_DOCUMENT_NUMBER by validate_official_source_metadata for this
+    # same bounded ID -- reused here rather than re-authored under a second
+    # frontmatter key that could silently drift from the validated one.
+    document_number = str(meta.get("official_document_number", "")).strip()
+
+    return {
+        "document_title": document_title,
+        "document_number": document_number,
+        "article_number": article_number,
+        "article_title": article_title,
+        "clause_numbers": clause_numbers,
+    }
+
+
 def parse_snippet(path: Path) -> dict[str, Any]:
     raw = path.read_text(encoding="utf-8")
     match = FRONTMATTER_RE.match(raw)
@@ -309,6 +513,7 @@ def parse_snippet(path: Path) -> dict[str, Any]:
         raise SnippetBuildError(f"{path}: ## Plain summary must not be empty")
 
     validate_official_source_metadata(snippet["id"], meta, path)
+    snippet.update(validate_article_level_citation_metadata(snippet["id"], meta, path))
 
     return snippet
 

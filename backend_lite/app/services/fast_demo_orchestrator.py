@@ -360,7 +360,7 @@ class FastDemoOrchestrator:
             )
             candidate.last_draft = DraftRecord(title=draft_block.title, body=draft_block.body)
 
-        sources = self._pack.resolve_selected(pack, plan.selected_source_ids)
+        sources = self._pack.resolve_selected(pack, plan.selected_source_ids, facts=candidate.facts)
 
         response = AnalyzeResponse(
             response_kind="legal",

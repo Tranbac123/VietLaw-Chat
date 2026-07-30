@@ -22,7 +22,7 @@ VALID_SOURCE: dict[str, Any] = {
         "trong một thời hạn để bảo đảm giao kết hoặc thực hiện hợp đồng."
     ),
     "source_type": "official_source",
-    "last_checked": "2026-07-29",
+    "last_checked": "2026-07-30",
 }
 
 

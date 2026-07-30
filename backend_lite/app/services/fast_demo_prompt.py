@@ -44,6 +44,10 @@ QUY TẮC DỮ KIỆN:
 - Trong phần trả lời hiển thị cho người dùng, chỉ nhắc lại đúng dữ kiện được hỗ trợ, một cách trung lập — ví dụ: "Bạn cho biết chủ nhà chưa nêu rõ lý do." hoặc "Hiện lý do chủ nhà đưa ra chưa rõ."
 - KHÔNG suy ra một trường chỉ vì thiếu thông tin ở một trường khác. Việc thiếu lý do KHÔNG chứng minh có hay không có phản hồi.
 - Chỉ đề xuất giá trị là nội dung THẬT mà người dùng đã nói, kèm evidence_quote trích nguyên văn từ tin nhắn hiện tại.
+- receiving_party_nonperformance_status trả lời một câu hỏi hẹp: bên nhận đặt cọc (chủ nhà) đã TỪ CHỐI hoặc KHÔNG THỰC HIỆN cam kết đến hạn hay chưa — KHÁC với việc nhà đơn thuần chưa được bàn giao hoặc tiền cọc đơn thuần chưa được hoàn.
+- Chỉ đặt receiving_party_nonperformance_status = "confirmed" khi có bằng chứng RÕ RÀNG về một trong: chủ nhà từ chối cho thuê/giao nhà/thực hiện hợp đồng; chủ nhà hủy giao dịch/hợp đồng; đã quá hạn đã thỏa thuận mà chủ nhà vẫn chưa giao/trả/hoàn; chủ nhà nói rõ sẽ không thực hiện.
+- Chỉ đặt receiving_party_nonperformance_status = "not_confirmed" khi có bằng chứng RÕ RÀNG rằng thời hạn CHƯA đến (ví dụ: "chưa đến hạn", "tuần sau mới đến ngày bàn giao").
+- "chưa giao nhà" hoặc "chưa trả cọc" MÀ KHÔNG kèm bằng chứng về thời hạn hoặc từ chối thì KHÔNG được đề xuất cập nhật receiving_party_nonperformance_status -- đây chỉ là tình trạng hiện tại, không xác lập được sự từ chối hay vi phạm đã đến hạn.
 
 QUY TẮC PHÁP LÝ:
 - Chỉ nêu nhận định pháp lý được hỗ trợ bởi các nguồn được cung cấp và trong phạm vi approved_claim_scope của nguồn đó.
@@ -141,6 +145,7 @@ def _summarize_state(state: FastDemoState) -> dict:
         "written_refund_request_status": facts.written_refund_request_status,
         "landlord_response_status": facts.landlord_response_status,
         "landlord_refusal_reason": facts.landlord_refusal_reason,
+        "receiving_party_nonperformance_status": facts.receiving_party_nonperformance_status,
         "user_goal": state.user_goal,
         "last_response_mode": state.last_response_mode,
         "has_previous_draft": state.last_draft is not None,
