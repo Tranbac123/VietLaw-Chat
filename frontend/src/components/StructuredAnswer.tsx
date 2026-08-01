@@ -17,6 +17,7 @@ import { selectSafeSources } from '../lib/sourceUrl';
 import { DecisionBadge } from './DecisionBadge';
 import { RiskBadge } from './RiskBadge';
 import { SourcePanel } from './SourcePanel';
+import { TrustBadge } from './TrustBadge';
 
 interface StructuredAnswerProps {
   content: AnalyzeContent;
@@ -368,7 +369,20 @@ export function StructuredAnswer({
       {/* Visibility is decided by the validated collection inside SourcePanel,
           not by the raw array length: a response whose URLs are all unsafe
           must render no source UI at all. */}
-      {revealState.showSources && <SourcePanel sources={visibleSources} />}
+      {revealState.showSources && content.trust_level && (
+        <TrustBadge
+          trustLevel={content.trust_level}
+          trustLabel={content.trust_label}
+          trustExplanation={content.trust_explanation}
+        />
+      )}
+      {revealState.showSources && (
+        visibleSources.length > 0
+          ? <SourcePanel sources={visibleSources} />
+          : content.trust_level === 'general_guidance' && (
+            <p className="general-guidance-notice">Chưa đủ căn cứ pháp lý để kết luận.</p>
+          )
+      )}
     </div>
   );
 }

@@ -200,13 +200,34 @@ describe('compact source references', () => {
     ]);
   });
 
-  it('de-duplicates repeated URLs', async () => {
+  it('de-duplicates only a genuinely repeated source (same id), not merely a repeated URL', async () => {
+    // Legal Correction Round 1 (Traffic Safe Subset V1): two DISTINCT
+    // citations (e.g. a rule's fine and its separate licence-point
+    // deduction) can legitimately share one document's URL and must render
+    // as two separate cards, never collapse into one -- so de-duplication
+    // keys on `id`, not on the URL. A literal repeat of the same `id` (the
+    // same logical source appearing twice in the array) still collapses.
     const user = userEvent.setup();
     renderAnswer({
       sources: [
         makeSource('s1', 'https://example.com/same'),
-        makeSource('s2', 'https://example.com/same'),
+        makeSource('s1', 'https://example.com/same'), // true duplicate: same id
+        makeSource('s2', 'https://example.com/same'), // distinct id, same URL -- kept
         makeSource('s3', 'https://example.com/other'),
+      ],
+    });
+
+    await user.click(screen.getByRole('button', { name: /Nguồn tham khảo/ }));
+    expect(screen.getAllByRole('link')).toHaveLength(3);
+  });
+
+  it('falls back to URL-based de-duplication when a source has no id', async () => {
+    const user = userEvent.setup();
+    renderAnswer({
+      sources: [
+        makeSource('', 'https://example.com/same'),
+        makeSource('', 'https://example.com/same'),
+        makeSource('', 'https://example.com/other'),
       ],
     });
 

@@ -64,6 +64,13 @@ class AnalyzeResponse(BaseModel):
     draft: DraftBlock | None = None
     known_facts: list[str] = Field(default_factory=list)
     uncertainty_notice: str | None = None
+    # Public Beta V0 trust-level contract (additive; see contracts/legal_trust.py).
+    # `source_checked_at` may be absent for curated static content whose
+    # freshness is already carried by each SourceObject's `last_checked`.
+    trust_level: str | None = None
+    trust_label: str | None = None
+    trust_explanation: str | None = None
+    source_checked_at: str | None = None
 
     @model_validator(mode="after")
     def _check_response_kind_invariants(self) -> "AnalyzeResponse":
@@ -87,7 +94,10 @@ class AnalyzeResponse(BaseModel):
         # Optional/additive fields are emitted only when the constructor set
         # them explicitly, so the baseline wire contract stays byte-identical
         # and only FAST DEMO V2 responses carry the extra blocks.
-        for field in ("response_kind", "analysis", "draft", "known_facts", "uncertainty_notice"):
+        for field in (
+            "response_kind", "analysis", "draft", "known_facts", "uncertainty_notice",
+            "trust_level", "trust_label", "trust_explanation", "source_checked_at",
+        ):
             if field not in self.model_fields_set:
                 data.pop(field, None)
         return data
@@ -113,3 +123,7 @@ class HealthResponse(BaseModel):
     rag_loaded: bool
     safety_loaded: bool
     chat_store_ready: bool
+    traffic_pack_required: bool
+    traffic_pack_loaded: bool
+    traffic_enabled_rule_count: int | None = None
+    traffic_pack_exact_inventory_valid: bool = False

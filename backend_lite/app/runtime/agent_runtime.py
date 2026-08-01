@@ -103,6 +103,7 @@ class AgentRuntime:
         title_service: TitleService,
         demo_orchestrator: "DemoOrchestrator | None" = None,
         fast_demo_orchestrator=None,
+        legal_fallback_orchestrator=None,
         request_receipts=None,
     ) -> None:
         self.chat_store = chat_store
@@ -121,6 +122,12 @@ class AgentRuntime:
         self.title_service = title_service
         self.demo_orchestrator = demo_orchestrator
         self.fast_demo_orchestrator = fast_demo_orchestrator
+        # Public Beta V0: optional sibling hook, only ever consulted when
+        # `fast_demo_orchestrator` itself declined the turn as out of its
+        # scope (see the branch in `_analyze_turn` below). When absent
+        # (default), `_analyze_turn`'s behavior for every route is
+        # byte-identical to before this vertical existed.
+        self.legal_fallback_orchestrator = legal_fallback_orchestrator
         # Optional: when absent, analyze() keeps its exact legacy behaviour.
         self.request_receipts = request_receipts
 
@@ -455,6 +462,40 @@ class AgentRuntime:
             except Exception:  # noqa: BLE001 - contain; never leak a raw error
                 state.trace.warnings.append("fast_demo_v2_deferred")
                 fast_response = None
+
+            # Public Beta V0 (legal-fallback vertical): only ever consulted
+            # when FAST DEMO V2 itself just declined the turn as out of its
+            # scope -- never for a deposit-shaped answer, and structurally
+            # never for the unsafe route, which sets metadata["unsafe"]=True
+            # under the same "scope" response_kind. See
+            # `services/legal_fallback_orchestrator.py`'s module docstring.
+            #
+            # `fast_demo_routing.is_unsafe()` uses its own deliberately
+            # narrow keyword set, distinct from the baseline
+            # `unsafe_patterns.json`-driven detector run above (task §9:
+            # "the official-source fallback must not execute for unsafe
+            # requests before safety handling") -- a phrase the baseline
+            # detector already flagged (`unsafe_intent_detected`) must gate
+            # this hook too, even on a turn FAST DEMO V2's own narrower
+            # check did not itself label unsafe. Never rescue what the
+            # baseline safety layer already refused.
+            if (
+                fast_response is not None
+                and self.legal_fallback_orchestrator is not None
+                and fast_response.metadata.get("fast_demo_route") == "scope"
+                and not fast_response.metadata.get("unsafe")
+                and not state.classification.unsafe_intent_detected
+            ):
+                fallback_response = None
+                try:
+                    with self._phase(state, "legal_fallback"):
+                        fallback_response = await self.legal_fallback_orchestrator.handle(state)
+                except Exception:  # noqa: BLE001 - contain; never leak a raw error
+                    state.trace.warnings.append("legal_fallback_deferred")
+                    fallback_response = None
+                if fallback_response is not None:
+                    fast_response = fallback_response
+
             if fast_response is not None:
                 state.final_response = fast_response
                 with self._phase(state, "validate_final_response"):
@@ -470,6 +511,7 @@ class AgentRuntime:
                                 "clarifying_questions", "checklist", "next_steps", "sources",
                                 "safety_notice", "confidence", "metadata",
                                 "analysis", "draft", "known_facts", "uncertainty_notice",
+                                "trust_level", "trust_label", "trust_explanation", "source_checked_at",
                             },
                         )
                     )

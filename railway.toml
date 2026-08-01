@@ -1,0 +1,40 @@
+# VietLaw Limited Demo -- Railway service configuration (config-as-code).
+#
+# This file configures ONLY what Railway's config-as-code schema actually
+# supports: the build method and the deploy-time health check/restart
+# policy. It cannot attach a persistent volume, generate a public domain,
+# or set environment variables -- those are manual, one-time owner actions
+# in the Railway dashboard, documented in full in
+# `DEPLOY_RAILWAY_CLOUDFLARE.md` (§"Manual Railway settings").
+#
+# This file describes configuration only. No Railway project was created
+# and no deployment was performed as part of this task.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.backend"
+
+[deploy]
+# Matches `backend_lite/app/api/routes_health.py`: local-only readiness
+# (curated data loaded, SQLite chat store bootstrapped) -- never a live
+# LLM call or the official-search provider, so a slow third party can
+# never fail this check or block a deploy.
+healthCheckPath = "/api/health"
+# Generous first-boot allowance (dependency install already happened at
+# image-build time, but SQLite schema bootstrap against a freshly attached
+# volume, and Python/uvicorn cold start, still need a little headroom).
+healthCheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+# Deployment Correction Round 1 (MEDIUM-03): `numReplicas` is not part of
+# Railway's actual config-as-code schema and is silently ignored if
+# present -- it must NOT appear here. Exactly one replica is still
+# REQUIRED for the same reasons as before (a second replica would mean two
+# Uvicorn processes independently writing the SAME SQLite file on the SAME
+# mounted volume, and the in-process rate limiter's counters would silently
+# split across replicas) -- see
+# `VIETLAW_LIMITED_DEMO_DEPLOYMENT_ARCHITECTURE_V1.md`, "Why one replica".
+# This is now a MANUAL Railway dashboard gate instead: Railway dashboard ->
+# the service -> Settings -> Scaling/Replicas -> exactly 1. Verify this
+# after every configuration import and after every dashboard change --
+# nothing in this file enforces it.

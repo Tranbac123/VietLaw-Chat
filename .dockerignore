@@ -1,0 +1,85 @@
+# VietLaw Limited Demo -- Docker build context exclusions.
+#
+# `Dockerfile.backend` only ever `COPY`s `backend_lite/requirements.txt`,
+# `backend_lite/app`, `backend_lite/__init__.py`, and `data`, so most of
+# these entries are defense in depth (the explicit COPY list already
+# excludes everything else) rather than the only thing standing between a
+# secret and the image -- but a smaller build context also uploads faster
+# to the Docker daemon and never gets a chance to be copied by a future,
+# less careful Dockerfile edit.
+#
+# Runtime-required legal JSON data (data/legal_snippets.json,
+# data/traffic_rules.json, data/unsafe_patterns.json) is deliberately NOT
+# excluded here -- only the local dev SQLite database and non-runtime data
+# tooling artifacts are.
+
+# -- version control -----------------------------------------------------
+.git/
+.git
+.gitignore
+.gitattributes
+**/.git/
+
+# -- the OTHER backend implementation and the frontend -------------------
+# `backend/` is owned by another team member and is never built or started
+# by Dockerfile.backend (see backend_lite/README.md). The frontend is a
+# wholly separate Cloudflare Pages deployment (see DEPLOY_RAILWAY_
+# CLOUDFLARE.md) -- this image never builds or serves it.
+backend/
+frontend/
+
+# -- Node ------------------------------------------------------------------
+node_modules/
+**/node_modules/
+
+# -- Python caches/venvs ---------------------------------------------------
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.venv/
+venv/
+*.egg-info/
+
+# -- local SQLite databases (never baked into the image; Railway mounts a
+#    persistent volume for these at runtime instead) -----------------------
+*.db
+*.sqlite
+*.sqlite3
+data/*.sqlite3
+
+# -- secrets / local env ----------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+*.secret
+
+# -- reports not needed at runtime (documentation only, never imported) ----
+*.md
+
+# -- tests (never imported by the running application) ----------------------
+backend_lite/tests/
+evaluation/
+
+# -- misc temporary / large binary files ------------------------------------
+*.tmp
+*.temp
+tmp/
+.DS_Store
+Thumbs.db
+*.mp4
+*.mov
+*.avi
+*.mkv

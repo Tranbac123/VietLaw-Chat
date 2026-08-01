@@ -60,6 +60,23 @@ class SourceObject(BaseModel):
     clause_numbers: list[int] = Field(default_factory=list)
     applicable_clause: int | None = None
     relevance_note: str | None = None
+    # Public Beta V0: when this source was retrieved live (official-source
+    # search). Optional and additive; absent for curated static content,
+    # which already carries `last_checked` for that purpose.
+    retrieved_at: str | None = None
+    # Legal Correction Round 1 (Traffic Safe Subset V1, MEDIUM-01): a curated
+    # traffic rule's legal support is a LIST of independently traceable
+    # provisions (contracts/traffic.py::TrafficLegalCitation), each rendered
+    # as its own SourceObject rather than folded into one card's prose.
+    # Optional and additive -- None for every source outside that model
+    # (MODE_2D citations, official-source-search results, and general
+    # curated notes never set these). `clause_number` is the exact source
+    # string (e.g. "1-4" for a multi-khoản signal-interpretation citation) --
+    # deliberately separate from `applicable_clause`/`clause_numbers` above,
+    # which are integer-only and cannot represent a khoản range without loss.
+    clause_number: str | None = None
+    point_number: str | None = None
+    citation_role: str | None = None
 
 
 class Confidence(BaseModel):
@@ -167,6 +184,11 @@ class AnalyzeContent(BaseModel):
     draft: DraftBlock | None = None
     known_facts: list[str] = Field(default_factory=list)
     uncertainty_notice: str | None = None
+    # Public Beta V0 trust-level contract (additive; see contracts/legal_trust.py).
+    trust_level: str | None = None
+    trust_label: str | None = None
+    trust_explanation: str | None = None
+    source_checked_at: str | None = None
 
     @model_validator(mode="after")
     def _check_response_kind_invariants(self) -> "AnalyzeContent":
@@ -190,7 +212,10 @@ class AnalyzeContent(BaseModel):
         # Optional/additive fields are emitted only when explicitly set, so
         # legacy persisted content and baseline responses keep their exact
         # historical key set.
-        for field in ("response_kind", "analysis", "draft", "known_facts", "uncertainty_notice"):
+        for field in (
+            "response_kind", "analysis", "draft", "known_facts", "uncertainty_notice",
+            "trust_level", "trust_label", "trust_explanation", "source_checked_at",
+        ):
             if field not in self.model_fields_set:
                 data.pop(field, None)
         return data

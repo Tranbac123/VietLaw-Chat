@@ -1,0 +1,71 @@
+# VietLaw Limited Demo -- backend container image (Railway).
+#
+# Runs `backend_lite/` (the deterministic reference FastAPI + SQLite
+# implementation -- see `backend_lite/README.md`), NOT `backend/` (a
+# separate implementation owned by another team member, never built or
+# started by this image).
+#
+# Single stage: this backend has no compiled/native asset step (pure
+# Python, pip-installable dependencies) that would benefit from a
+# build/runtime split, so a second stage would add complexity without
+# reducing the final image size or attack surface.
+
+FROM python:3.11-slim
+
+# Unbuffered stdout/stderr so Railway's log stream shows output as it
+# happens rather than buffered in chunks; no .pyc cache in the image
+# (irrelevant startup-time optimization, avoids writable-layer bloat).
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+# Dependencies first, isolated from application-code changes, so
+# `pip install` is only re-run when requirements.txt itself changes --
+# not on every source edit.
+COPY backend_lite/requirements.txt ./backend_lite/requirements.txt
+RUN pip install --no-cache-dir -r backend_lite/requirements.txt
+
+# Only the runtime-required application code and curated data -- never
+# `backend/` (the other implementation), `frontend/`, tests, reports, or
+# any local `.env`/SQLite file (all excluded by `.dockerignore`, which is
+# the actual build-context boundary; the explicit COPY list below is a
+# second, redundant guarantee that nothing else is added even if
+# `.dockerignore` is ever loosened by mistake).
+COPY backend_lite/app ./backend_lite/app
+COPY backend_lite/__init__.py ./backend_lite/__init__.py
+COPY data ./data
+COPY docker-entrypoint.py /app/docker-entrypoint.py
+
+# A non-root user the application process eventually runs as -- but the
+# image intentionally does NOT switch to it here (no `USER` directive).
+# Railway mounts its persistent volume at /data ROOT-OWNED regardless of
+# what this image declares, so the container must still START as root:
+# `docker-entrypoint.py` (Deployment Correction Round 1, HIGH-02) inspects
+# and repairs /data's ownership at RUN time, then drops privileges to this
+# user itself before exec'ing Uvicorn. /app is chowned here at build time
+# since the application code itself never needs write access to it; only
+# /data (repaired at container start, whatever it turns out to be mounted
+# as) does.
+RUN groupadd --system vietlaw && \
+    useradd --system --gid vietlaw --home-dir /app --no-create-home vietlaw && \
+    chown -R vietlaw:vietlaw /app
+
+# Railway injects $PORT at runtime; 8000 is only the local-run fallback
+# (matches this repo's documented "backend production is expected on port
+# 8000" convention in backend_lite/README.md). No EXPOSE of a fixed port:
+# Railway's routing does not depend on it, and the real bind port is only
+# known at container start.
+ENV PORT=8000
+
+ENTRYPOINT ["python3", "/app/docker-entrypoint.py"]
+
+# No dev server, no --reload: the production ASGI server, bound to
+# 0.0.0.0 (reachable from outside the container) on Railway's assigned
+# $PORT. Shell form so ${PORT} is expanded by the shell at container
+# start, not baked in at build time. Docker concatenates ENTRYPOINT+CMD as
+# argv, so `docker-entrypoint.py` receives this as `sys.argv[1:]` and
+# `os.execvp`s it after dropping privileges.
+CMD ["sh", "-c", "exec uvicorn backend_lite.app.main:app --host 0.0.0.0 --port ${PORT}"]

@@ -43,7 +43,22 @@ export interface SourceObject {
   clause_numbers?: number[];
   applicable_clause?: number | null;
   relevance_note?: string | null;
+  /** Public Beta V0: when this source was retrieved live (official-source
+   * search). Absent for curated static content, which already carries
+   * `last_checked` for that purpose. */
+  retrieved_at?: string | null;
+  /** Legal Correction Round 1 (Traffic Safe Subset V1): present only for a
+   * curated traffic rule's individual legal-citation sources -- absent for
+   * every other source. `clause_number` is the exact source string (e.g.
+   * "1-4"), distinct from the integer-only `applicable_clause` above, which
+   * cannot represent a khoản range. */
+  clause_number?: string | null;
+  point_number?: string | null;
+  citation_role?: string | null;
 }
+
+/** Public Beta V0 trust-level contract (see `contracts/legal_trust.py`). */
+export type TrustLevel = 'curated_verified' | 'official_source_search' | 'general_guidance';
 
 export interface Confidence {
   domain: number;
@@ -91,6 +106,11 @@ interface AnalyzeResponseCommon {
   draft?: DraftBlock | null;
   known_facts?: string[];
   uncertainty_notice?: string | null;
+  /** Public Beta V0 trust-level contract (absent on baseline responses). */
+  trust_level?: TrustLevel | null;
+  trust_label?: string | null;
+  trust_explanation?: string | null;
+  source_checked_at?: string | null;
 }
 
 export interface LegalAnalyzeResponse extends AnalyzeResponseCommon {
@@ -141,6 +161,11 @@ interface AnalyzeContentCommon {
   draft?: DraftBlock | null;
   known_facts?: string[];
   uncertainty_notice?: string | null;
+  /** Public Beta V0 trust-level contract (absent on baseline responses). */
+  trust_level?: TrustLevel | null;
+  trust_label?: string | null;
+  trust_explanation?: string | null;
+  source_checked_at?: string | null;
 }
 
 export interface LegalAnalyzeContent extends AnalyzeContentCommon {
