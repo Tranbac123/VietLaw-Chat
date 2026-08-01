@@ -24,6 +24,14 @@ class SnippetRecord(BaseModel):
     tags: list[str]
     risk_notes: list[str]
     last_checked: str
+    # MODE_2D: article-level legal citation metadata, curated per snippet.
+    # None/empty for every snippet without verified article-level data --
+    # bounded to civil_deposit_001 in this task (see the migration report).
+    document_title: str | None = None
+    document_number: str | None = None
+    article_number: str | None = None
+    article_title: str | None = None
+    clause_numbers: list[int] = []
 
     def as_source(self) -> SourceObject:
         return SourceObject(
@@ -34,6 +42,11 @@ class SnippetRecord(BaseModel):
             snippet=self.plain_language_summary if self.source_type == "safety_policy" else self.text,
             source_type=self.source_type,
             last_checked=self.last_checked,
+            document_title=self.document_title,
+            document_number=self.document_number,
+            article_number=self.article_number,
+            article_title=self.article_title,
+            clause_numbers=list(self.clause_numbers),
         )
 
 

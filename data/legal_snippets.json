@@ -4,7 +4,7 @@
     "domain": "civil_dispute",
     "title": "Đặt cọc để bảo đảm giao kết hoặc thực hiện hợp đồng",
     "source_name": "Bộ luật Dân sự 2015 - Điều 328",
-    "source_url": "https://vbpl.moj.gov.vn/tuyenquang/Pages/vbpq-toanvan.aspx?ItemID=95942&Keyword=",
+    "source_url": "https://congbao.chinhphu.vn/van-ban/luat-so-91-2015-qh13-18397.htm",
     "source_type": "official_source",
     "status": "active",
     "text": "Đặt cọc là việc một bên giao cho bên kia một khoản tiền hoặc tài sản có giá trị trong một thời hạn để bảo đảm giao kết hoặc thực hiện hợp đồng. Khi có tranh chấp tiền cọc, cần xem thỏa thuận đặt cọc, điều kiện hoàn trả hoặc mất cọc và việc các bên có thực hiện đúng cam kết hay không.",
@@ -23,14 +23,22 @@
       "money_dispute",
       "ask_for_contract_and_payment_proof"
     ],
-    "last_checked": "2026-07-10"
+    "last_checked": "2026-07-30",
+    "document_title": "Bộ luật Dân sự 2015",
+    "document_number": "91/2015/QH13",
+    "article_number": "328",
+    "article_title": "Đặt cọc",
+    "clause_numbers": [
+      1,
+      2
+    ]
   },
   {
     "id": "civil_contract_001",
     "domain": "civil_dispute",
     "title": "Nội dung cơ bản của hợp đồng",
     "source_name": "Bộ luật Dân sự 2015 - Điều 398",
-    "source_url": "https://vbpl.moj.gov.vn/tuyenquang/Pages/vbpq-toanvan.aspx?ItemID=95942&Keyword=",
+    "source_url": "https://congbao.chinhphu.vn/van-ban/luat-so-91-2015-qh13-18397.htm",
     "source_type": "official_source",
     "status": "active",
     "text": "Hợp đồng thường thể hiện các nội dung như đối tượng, giá, phương thức thanh toán, thời hạn, địa điểm, phương thức thực hiện, quyền và nghĩa vụ của các bên, trách nhiệm do vi phạm và phương thức giải quyết tranh chấp.",
@@ -48,14 +56,14 @@
       "medium_risk",
       "contract_dispute"
     ],
-    "last_checked": "2026-07-10"
+    "last_checked": "2026-07-29"
   },
   {
     "id": "civil_contract_002",
     "domain": "civil_dispute",
     "title": "Hiệu lực và thực hiện hợp đồng",
     "source_name": "Bộ luật Dân sự 2015 - Quy định chung về hợp đồng",
-    "source_url": "https://vbpl.moj.gov.vn/tuyenquang/Pages/vbpq-toanvan.aspx?ItemID=95942&Keyword=",
+    "source_url": "https://congbao.chinhphu.vn/van-ban/luat-so-91-2015-qh13-18397.htm",
     "source_type": "official_source",
     "status": "active",
     "text": "Hợp đồng được giao kết hợp pháp có hiệu lực từ thời điểm giao kết, trừ khi các bên có thỏa thuận khác hoặc luật liên quan có quy định khác. Từ thời điểm có hiệu lực, các bên phải thực hiện quyền và nghĩa vụ theo cam kết.",
@@ -71,7 +79,7 @@
       "medium_risk",
       "ask_for_contract_terms"
     ],
-    "last_checked": "2026-07-10"
+    "last_checked": "2026-07-29"
   },
   {
     "id": "civil_rental_001",

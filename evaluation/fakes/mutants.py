@@ -16,13 +16,13 @@ VALID_SOURCE: dict[str, Any] = {
     "id": "civil_deposit_001",
     "title": "Đặt cọc để bảo đảm giao kết hoặc thực hiện hợp đồng",
     "source_name": "Bộ luật Dân sự 2015 - Điều 328",
-    "url": "https://vbpl.moj.gov.vn/tuyenquang/Pages/vbpq-toanvan.aspx?ItemID=95942&Keyword=",
+    "url": "https://congbao.chinhphu.vn/van-ban/luat-so-91-2015-qh13-18397.htm",
     "snippet": (
         "Đặt cọc là việc một bên giao cho bên kia một khoản tiền hoặc tài sản có giá trị "
         "trong một thời hạn để bảo đảm giao kết hoặc thực hiện hợp đồng."
     ),
     "source_type": "official_source",
-    "last_checked": "2026-07-10",
+    "last_checked": "2026-07-30",
 }
 
 

@@ -16,6 +16,10 @@ class RequestState:
     question: str
     user_type: str
     language: str
+    # FAST DEMO V2 client-supplied idempotency key (stable across transport
+    # retries of one user submission). Defaulted so every existing construction
+    # site keeps working.
+    client_request_id: str | None = None
 
 
 @dataclass

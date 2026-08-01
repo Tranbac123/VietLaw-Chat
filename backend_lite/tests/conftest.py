@@ -11,6 +11,34 @@ from backend_lite.app.main import create_app
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# Settings loads the repository `.env` into os.environ, so on a machine with a
+# populated `.env` the demo flags and a live credential become visible to the
+# whole test process. Without this guard the fast-demo orchestrator is wired
+# into every create_app(), the suite makes real provider calls (slow, billable,
+# non-deterministic), and baseline tests that expect the baseline pipeline to
+# own the turn fail. Tests needing the orchestrator inject it explicitly, so
+# clearing these here is safe.
+_AMBIENT_PROVIDER_ENV = (
+    "VIETLAW_FAST_DEMO_V2_ENABLED",
+    "VIETLAW_DEMO_VERTICAL_SLICE_ENABLED",
+    "VIETLAW_LLM_ENABLED",
+    "VIETLAW_LLM_MODEL",
+    "VIETLAW_LLM_PROVIDER",
+    "VIETLAW_LLM_TIMEOUT_S",
+    "VIETLAW_FAST_DEMO_TIMEOUT_S",
+    "VIETLAW_FAST_DEMO_MAX_TOKENS",
+    "VIETLAW_FAST_DEMO_STRUCTURED_OUTPUT",
+    "ANTHROPIC_API_KEY",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_provider_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every test hermetic with respect to ambient provider configuration."""
+
+    for name in _AMBIENT_PROVIDER_ENV:
+        monkeypatch.delenv(name, raising=False)
+
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:

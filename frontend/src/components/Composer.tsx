@@ -4,7 +4,14 @@ interface ComposerProps {
   inputDisabled: boolean;
   submitDisabled: boolean;
   isEmptyChat: boolean;
-  onSend: (question: string) => Promise<boolean>;
+  /**
+   * Dispatches the question. `onAccepted` is invoked by the owner the moment the
+   * submission is accepted for dispatch -- before the backend has answered -- so
+   * the composer can empty itself then rather than a whole round-trip later. It
+   * is never invoked for a submission refused before dispatch, which is what
+   * keeps a rejected draft available for editing.
+   */
+  onSend: (question: string, onAccepted: () => void) => Promise<boolean>;
 }
 
 const MAX_ROWS = 10;
@@ -40,13 +47,21 @@ export function Composer({ inputDisabled, submitDisabled, isEmptyChat, onSend }:
   }, [draft]);
 
   async function submit() {
+    // `question` is the immutable snapshot of this submission. Everything
+    // downstream uses it, so nothing depends on `draft` still holding the text.
     const question = draft.trim();
+
+    // Refused before dispatch (empty/whitespace-only, or the composer is busy):
+    // nothing is sent, nothing is appended, and the draft stays put to be edited.
     if (!question || isSubmitDisabled) return;
 
     setSubmitting(true);
     try {
-      const sent = await onSend(question);
-      if (sent) setDraft('');
+      // The draft is cleared from inside `onAccepted`, i.e. the instant the
+      // submission is accepted -- not when the response arrives. Waiting for the
+      // await below left the sent text sitting in the input for the whole
+      // "Đang suy nghĩ..." phase.
+      await onSend(question, () => setDraft(''));
     } finally {
       setSubmitting(false);
     }
@@ -93,11 +108,11 @@ export function Composer({ inputDisabled, submitDisabled, isEmptyChat, onSend }:
         </div>
         <div className="composer-notices">
           <p className="composer-privacy">Không nhập số CCCD, tài khoản ngân hàng, địa chỉ cụ thể hoặc thông tin nhạy cảm.</p>
-          {isEmptyChat && (
-            <p className="composer-legal-reference">
-              Thông tin chỉ mang tính tham khảo, không thay thế tư vấn của luật sư hoặc hướng dẫn của cơ quan pháp lý có thẩm quyền.
-            </p>
-          )}
+          {/* Persistent legal disclaimer: rendered once by the shell, always
+              visible, and never repeated inside individual messages. */}
+          <p className="composer-legal-reference">
+            Thông tin chỉ mang tính tham khảo, không thay thế tư vấn của luật sư hoặc cơ quan có thẩm quyền.
+          </p>
         </div>
       </div>
     </form>

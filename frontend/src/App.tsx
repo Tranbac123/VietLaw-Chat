@@ -6,6 +6,11 @@ import { ChatWindow } from './components/ChatWindow';
 import { Composer } from './components/Composer';
 import { Sidebar } from './components/Sidebar';
 import { MIN_THINKING_MS } from './lib/animation';
+import {
+  clearSelectedChatId,
+  readSelectedChatId,
+  writeSelectedChatId,
+} from './lib/selectedChat';
 import { getOrCreateSessionId } from './lib/session';
 
 type AssistantResponsePhase = 'idle' | 'thinking' | 'revealing';
@@ -33,7 +38,28 @@ function waitForMinimumThinkingDuration(remainingMs: number, cancellation: Promi
 }
 
 function pickAnalyzeContent(response: AnalyzeResponse): AnalyzeContent {
+  if (
+    response.response_kind === 'social'
+    || response.response_kind === 'capability'
+    || response.response_kind === 'scope'
+  ) {
+    return {
+      response_kind: response.response_kind,
+      domain: null,
+      risk_level: null,
+      decision: null,
+      summary: response.summary,
+      clarifying_questions: response.clarifying_questions,
+      checklist: response.checklist,
+      next_steps: response.next_steps,
+      sources: response.sources,
+      safety_notice: response.safety_notice,
+      confidence: null,
+      metadata: response.metadata,
+    };
+  }
   return {
+    response_kind: 'legal',
     domain: response.domain,
     risk_level: response.risk_level,
     decision: response.decision,
@@ -45,7 +71,38 @@ function pickAnalyzeContent(response: AnalyzeResponse): AnalyzeContent {
     safety_notice: response.safety_notice,
     confidence: response.confidence,
     metadata: response.metadata,
+    analysis: response.analysis ?? null,
+    draft: response.draft ?? null,
+    known_facts: response.known_facts ?? [],
+    uncertainty_notice: response.uncertainty_notice ?? null,
   };
+}
+
+/**
+ * The immutable record of a submission that was dispatched and then failed.
+ * Retry replays it verbatim, so the composer is never the store of record for
+ * in-flight text.
+ */
+interface Resubmission {
+  question: string;
+  clientRequestId: string;
+  userType: UserType;
+  temporaryUserMessageId: string;
+  /**
+   * The chat this request was dispatched against, captured at dispatch time.
+   * `null` means it was a new-chat request. Retry replays this value rather than
+   * whatever chat is selected now, so a retry can never be written into a
+   * different chat. For the `null` case the backend request receipt is
+   * authoritative: it resolves the retry to the chat the first attempt created,
+   * which the client may never have learned.
+   */
+  chatId: string | null;
+}
+
+function newClientRequestId(): string {
+  const cryptoRef = typeof crypto !== 'undefined' ? crypto : undefined;
+  if (cryptoRef?.randomUUID) return cryptoRef.randomUUID();
+  return `crid_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function messageFromError(error: unknown): string {
@@ -61,7 +118,14 @@ export function App() {
   const [selectedUserType, setSelectedUserType] = useState<UserType>('citizen');
   const [loadingChat, setLoadingChat] = useState(false);
   const [loadingChats, setLoadingChats] = useState(true);
+  // Explicit restoration phase. Until it resolves the app must not create a
+  // chat, dispatch a request or run a reveal -- otherwise the user briefly
+  // lands in New Chat and the real chat snaps in afterwards.
+  const [restoringSelectedChat, setRestoringSelectedChat] = useState(true);
+  const [chatListUnavailable, setChatListUnavailable] = useState(false);
+  const restoreAttemptedRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [failedSubmission, setFailedSubmission] = useState<Resubmission | null>(null);
   const [assistantResponsePhase, setAssistantResponsePhase] = useState<AssistantResponsePhase>('idle');
   const [animatingAssistantMessageId, setAnimatingAssistantMessageId] = useState<string | null>(null);
   const responseGenerationRef = useRef(0);
@@ -93,8 +157,12 @@ export function App() {
     try {
       const response = await listChats(sessionId);
       setChats(response.chats);
+      setChatListUnavailable(false);
     } catch (caughtError) {
       setChats([]);
+      // The list is the ownership oracle for restoration; if it did not load we
+      // must not conclude that a remembered chat is stale.
+      setChatListUnavailable(true);
       setError(messageFromError(caughtError));
     } finally {
       setLoadingChats(false);
@@ -105,12 +173,38 @@ export function App() {
     void refreshChats();
   }, [refreshChats]);
 
-  const submitQuestion = useCallback(async (question: string, requestedUserType = selectedUserType) => {
-    if (assistantResponsePhase !== 'idle' || loadingChat) return false;
+  const submitQuestion = useCallback(async (
+    question: string,
+    onAccepted?: () => void,
+    resubmission?: Resubmission,
+  ) => {
+    // A retry reuses the original idempotency key, so a request the backend may
+    // already have processed replays instead of spending a second provider
+    // call, and reuses the original placeholder id so the message already in the
+    // transcript is replaced rather than duplicated.
+    const clientRequestId = resubmission?.clientRequestId ?? newClientRequestId();
+    const requestedUserType = resubmission?.userType ?? selectedUserType;
+    // A retry stays bound to the chat it was originally dispatched against;
+    // only a fresh submission follows the currently selected chat.
+    const targetChatId = resubmission ? resubmission.chatId : activeChatId;
+    // A still-revealing previous answer must not refuse a new submission; only
+    // a request genuinely in flight does.
+    if (assistantResponsePhase === 'thinking' || loadingChat) return false;
 
     const generation = responseGenerationRef.current + 1;
     responseGenerationRef.current = generation;
-    const temporaryUserMessageId = `temporary-user-${generation}`;
+    // Retire whatever was still revealing the instant this submission is
+    // accepted -- not when B's own response eventually arrives. Bumping the
+    // generation above only affects which in-flight request is allowed to
+    // apply its result; it has no effect on the previous answer's own reveal
+    // timer, which is owned entirely inside StructuredAnswer/useWordReveal and
+    // keyed off `animatingAssistantMessageId`. Clearing it here is what makes
+    // that message's `animate` prop go false on the next render, which is what
+    // makes the old reveal complete immediately and its interval get cleared.
+    animatingAssistantMessageIdRef.current = null;
+    setAnimatingAssistantMessageId(null);
+    const temporaryUserMessageId = resubmission?.temporaryUserMessageId
+      ?? `temporary-user-${generation}`;
     const requestCreatedAt = new Date().toISOString();
     let cancelFlow!: () => void;
     const cancellation = new Promise<void>((resolve) => {
@@ -123,30 +217,41 @@ export function App() {
     });
 
     activeResponseFlowRef.current = { generation, temporaryUserMessageId, cancel: cancelFlow };
-    setMessages((currentMessages) => [
-      ...currentMessages,
-      {
-        message_id: temporaryUserMessageId,
-        chat_id: activeChatId ?? `temporary-chat-${generation}`,
-        role: 'user',
-        content_type: 'text',
-        content_text: question,
-        content_json: null,
-        created_at: requestCreatedAt,
-      },
-    ]);
+    const optimisticUserMessage: ChatMessage = {
+      message_id: temporaryUserMessageId,
+      chat_id: targetChatId ?? `temporary-chat-${generation}`,
+      role: 'user',
+      content_type: 'text',
+      content_text: question,
+      content_json: null,
+      created_at: requestCreatedAt,
+    };
+    setMessages((currentMessages) => (
+      // On a retry the placeholder is already on screen; replace it in place so
+      // the transcript never shows the same question twice.
+      currentMessages.some((message) => message.message_id === temporaryUserMessageId)
+        ? currentMessages.map((message) => (
+          message.message_id === temporaryUserMessageId ? optimisticUserMessage : message
+        ))
+        : [...currentMessages, optimisticUserMessage]
+    ));
     setAssistantResponsePhase('thinking');
     setError(null);
+    setFailedSubmission(null);
+    // The submission is now accepted and about to be dispatched: this is the
+    // moment the composer may empty itself.
+    onAccepted?.();
     const requestStartedAt = performance.now();
 
     try {
       const result = await Promise.race<AnalyzeRaceResult>([
         analyze({
           session_id: sessionId,
-          ...(activeChatId ? { chat_id: activeChatId } : {}),
+          ...(targetChatId ? { chat_id: targetChatId } : {}),
           question,
           user_type: requestedUserType,
           language: 'vi',
+          client_request_id: clientRequestId,
         }).then((response) => ({ kind: 'response', response })),
         cancellation.then(() => ({ kind: 'cancelled' })),
       ]);
@@ -179,6 +284,7 @@ export function App() {
       };
 
       setActiveChatId(response.chat_id);
+      writeSelectedChatId(response.chat_id);
       setMessages((currentMessages) => [
         ...currentMessages.map((message) => (
           message.message_id === temporaryUserMessageId ? userMessage : message
@@ -192,8 +298,19 @@ export function App() {
       return true;
     } catch (caughtError) {
       if (responseGenerationRef.current !== generation) return false;
-      removeOptimisticUserMessage(temporaryUserMessageId);
+      // The question stays in the transcript. Rolling it back made sense only
+      // while the composer still held the text; now that the composer empties on
+      // acceptance, removing it too would erase the message entirely. Retry is
+      // offered from the error banner and reuses the snapshot below, so nothing
+      // has to be retyped and no automatic resend happens.
       setError(messageFromError(caughtError));
+      setFailedSubmission({
+        question,
+        clientRequestId,
+        userType: requestedUserType,
+        temporaryUserMessageId,
+        chatId: targetChatId,
+      });
       setAssistantResponsePhase('idle');
       return false;
     } finally {
@@ -211,15 +328,23 @@ export function App() {
     sessionId,
   ]);
 
+  /** Replays the failed submission. Never triggered automatically. */
+  const retryFailedSubmission = useCallback(() => {
+    if (!failedSubmission) return;
+    void submitQuestion(failedSubmission.question, undefined, failedSubmission);
+  }, [failedSubmission, submitQuestion]);
+
   const openChat = useCallback(async (chatId: string) => {
     if (loadingChat || chatId === activeChatId) return;
 
     cancelResponseFlow();
     setLoadingChat(true);
     setError(null);
+    setFailedSubmission(null);
     try {
       const response = await getChat(chatId, sessionId);
       setActiveChatId(response.chat_id);
+      writeSelectedChatId(response.chat_id);
       setMessages(response.messages);
     } catch (caughtError) {
       setError(messageFromError(caughtError));
@@ -231,10 +356,45 @@ export function App() {
   function startNewChat() {
     if (loadingChat) return;
     cancelResponseFlow();
+    // An explicit New Chat is a deliberate choice to start fresh, so a later
+    // reload must stay on New Chat rather than resurrecting the old chat.
+    clearSelectedChatId();
     setActiveChatId(null);
     setMessages([]);
     setError(null);
+    setFailedSubmission(null);
   }
+
+  // Restore the previously selected chat exactly once, and only after the
+  // session-scoped chat list has arrived. Waiting is what prevents the flash
+  // where New Chat renders first and the real chat snaps in afterwards.
+  //
+  // Membership in that list IS the ownership check: the backend built it for
+  // this session, so an id belonging to someone else can never be restored. A
+  // stored id is never treated as authorization on its own.
+  useEffect(() => {
+    if (restoreAttemptedRef.current || loadingChats) return;
+    restoreAttemptedRef.current = true;
+
+    const stored = readSelectedChatId();
+    if (!stored) {
+      setRestoringSelectedChat(false);
+      return;
+    }
+    if (chatListUnavailable) {
+      // The list failed to load, so "not in the list" proves nothing. Keep the
+      // id for the next attempt rather than discarding a valid selection.
+      setRestoringSelectedChat(false);
+      return;
+    }
+    if (!chats.some((chat) => chat.chat_id === stored)) {
+      // Deleted, inaccessible to this session, or otherwise stale.
+      clearSelectedChatId();
+      setRestoringSelectedChat(false);
+      return;
+    }
+    void openChat(stored).finally(() => setRestoringSelectedChat(false));
+  }, [chatListUnavailable, chats, loadingChats, openChat]);
 
   const handleAnimationComplete = useCallback((messageId: string) => {
     if (animatingAssistantMessageIdRef.current !== messageId) return;
@@ -245,12 +405,21 @@ export function App() {
     ));
   }, []);
 
-  const controlsDisabled = assistantResponsePhase !== 'idle' || loadingChat;
-  const composerInputDisabled = assistantResponsePhase === 'thinking' || loadingChat;
-  const composerSubmitDisabled = assistantResponsePhase !== 'idle' || loadingChat;
+  // Only a request actually in flight ('thinking') may disable anything. The
+  // 'revealing' phase is presentation, so it must never gate Send, the chat
+  // controls or the next submission -- gating on `!== 'idle'` is precisely what
+  // once left Send permanently disabled when a reveal failed to finish.
+  const requestInFlight = assistantResponsePhase === 'thinking';
+  // Restoration is a brief startup phase, never a permanent state: it always
+  // resolves in the effect above, including on the error paths.
+  const busy = requestInFlight || loadingChat || restoringSelectedChat;
+  const controlsDisabled = busy;
+  const composerInputDisabled = busy;
+  const composerSubmitDisabled = busy;
   const isEmptyChat = messages.length === 0;
   const hasStartedConversation = !isEmptyChat || assistantResponsePhase !== 'idle';
   const showLanding = !hasStartedConversation;
+  const hasAssistantMessage = messages.some((message) => message.role === 'assistant');
 
   return (
     <ChatLayout
@@ -275,7 +444,8 @@ export function App() {
         onAnimationComplete={handleAnimationComplete}
         showLanding={showLanding}
         error={error}
-        onDismissError={() => setError(null)}
+        onDismissError={() => { setError(null); setFailedSubmission(null); }}
+        onRetry={failedSubmission ? retryFailedSubmission : undefined}
       />
       <Composer
         inputDisabled={composerInputDisabled}
