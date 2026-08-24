@@ -31,9 +31,9 @@ describe('normalizeApiBaseUrl', () => {
     );
   });
 
-  it('strips a trailing slash', () => {
-    expect(normalizeApiBaseUrl('https://vietlaw-backend.up.railway.app/', false)).toBe(
-      'https://vietlaw-backend.up.railway.app',
+  it('rejects a bare trailing slash (MEDIUM-01: no path exception, not even an empty one)', () => {
+    expect(() => normalizeApiBaseUrl('https://vietlaw-backend.up.railway.app/', false)).toThrow(
+      ApiBaseUrlConfigError,
     );
   });
 
@@ -69,9 +69,9 @@ describe('normalizeApiBaseUrl strict validation (environment-independent)', () =
     );
   });
 
-  it('accepts and normalizes a trailing slash', () => {
-    expect(normalizeApiBaseUrl('https://backend.example.com/', false)).toBe(
-      'https://backend.example.com',
+  it('rejects a trailing slash (MEDIUM-01: exact origin only, no path at all)', () => {
+    expect(() => normalizeApiBaseUrl('https://backend.example.com/', false)).toThrow(
+      ApiBaseUrlConfigError,
     );
   });
 
@@ -126,6 +126,111 @@ describe('normalizeApiBaseUrl production HTTPS-only boundary', () => {
 
   it('rejects a non-loopback http:// URL in production', () => {
     expect(() => normalizeApiBaseUrl('http://backend.example.com', false)).toThrow(
+      ApiBaseUrlConfigError,
+    );
+  });
+});
+
+/**
+ * Bounded pre-deploy hardening: `VITE_API_BASE_URL` must be an exact
+ * origin -- scheme + host(+port), nothing else. A path previously passed
+ * validation and `vite build` (e.g. `https://x.up.railway.app/api`),
+ * contradicting `frontend/.env.production.example`'s documented "no path"
+ * contract and doubling up with request paths the app itself appends.
+ */
+describe('normalizeApiBaseUrl exact-origin (no path) boundary', () => {
+  const pathBearingUrls: Array<[string, string]> = [
+    ['https://x.up.railway.app/api', 'a real path'],
+    ['https://x.up.railway.app/api/', 'a real path with trailing slash'],
+    ['https://x.up.railway.app/foo', 'an unrelated path'],
+  ];
+
+  it.each(pathBearingUrls)('rejects %s (%s) in production', (value) => {
+    expect(() => normalizeApiBaseUrl(value, false)).toThrow(ApiBaseUrlConfigError);
+  });
+
+  it.each(pathBearingUrls)('rejects %s (%s) in development too', (value) => {
+    expect(() => normalizeApiBaseUrl(value, true)).toThrow(ApiBaseUrlConfigError);
+  });
+
+  it('accepts a bare origin with no path', () => {
+    expect(normalizeApiBaseUrl('https://x.up.railway.app', false)).toBe(
+      'https://x.up.railway.app',
+    );
+  });
+
+  it('rejects a bare origin with only a trailing slash (MEDIUM-01: no exception for it)', () => {
+    expect(() => normalizeApiBaseUrl('https://x.up.railway.app/', false)).toThrow(
+      ApiBaseUrlConfigError,
+    );
+  });
+});
+
+/**
+ * Review finding MEDIUM-01: WHATWG `URL` normalizes dot segments (and
+ * their percent-encoded forms) while parsing, so a raw value like
+ * `https://example.com/a/..` or `https://example.com/%2e` previously
+ * parsed to a `pathname` of `/` -- identical to a bare origin. A first
+ * fix compared the raw (trimmed) value against `url.origin`, but still
+ * carved out an exception for a raw value equal to `${url.origin}/` --
+ * which is itself a normalized-form special case, and review found it
+ * insufficient (a bare trailing slash must ALSO be rejected: the contract
+ * is an exact origin, and a trailing slash is a path, even an empty one).
+ * The current fix (`assertRawExactOriginShape`) rejects PRE-PARSE, purely
+ * syntactically: the entire remainder after `scheme://` must contain none
+ * of `/ \ ? #`. A path, a dot segment, its percent-encoded form, and a
+ * bare trailing slash all necessarily contain a literal `/` (or `\`,
+ * normalized to `/` by the parser for special schemes) separating them
+ * from the authority -- so this single rule rejects all of them without
+ * the parser ever running on the rejected value, and without enumerating
+ * dot-segment encodings one by one.
+ */
+describe('normalizeApiBaseUrl raw-value exact-origin boundary (MEDIUM-01)', () => {
+  const validExactOrigins: Array<[string, string]> = [
+    ['https://example.com', 'bare origin, no port'],
+    ['https://example.com:8443', 'bare origin, explicit port'],
+  ];
+
+  it.each(validExactOrigins)('accepts %s (%s)', (value) => {
+    expect(normalizeApiBaseUrl(value, false)).toBe(value);
+  });
+
+  const pathShapedUrls: Array<[string, string]> = [
+    ['https://example.com/', 'bare trailing slash -- an empty path is still a path'],
+    ['https://example.com/api', 'ordinary path'],
+    ['https://example.com/api/', 'ordinary path with trailing slash'],
+    ['https://example.com/.', 'single dot segment'],
+    ['https://example.com/..', 'double dot segment'],
+    ['https://example.com/a/..', 'trailing double dot segment after a real path'],
+    ['https://example.com/%2e', 'percent-encoded dot segment, lowercase'],
+    ['https://example.com/%2E', 'percent-encoded dot segment, uppercase'],
+    ['https://example.com/%2e%2e', 'percent-encoded double dot segment, lowercase'],
+    ['https://example.com/%2E%2E', 'percent-encoded double dot segment, uppercase'],
+    ['https://example.com/a/%2e%2e', 'percent-encoded double dot segment after a real path'],
+    ['https://example.com/a/%2E%2E/', 'percent-encoded double dot segment with trailing slash'],
+    ['https://example.com\\foo', 'backslash path (normalized to / for special schemes)'],
+    ['https://example.com?x=1', 'query string'],
+    ['https://example.com#x', 'fragment'],
+    ['https://user:pass@example.com', 'embedded credentials'],
+    ['invalid-value', 'not a URL at all'],
+  ];
+
+  it.each(pathShapedUrls)('rejects %s (%s) in production', (value) => {
+    expect(() => normalizeApiBaseUrl(value, false)).toThrow(ApiBaseUrlConfigError);
+  });
+
+  it.each(pathShapedUrls)('rejects %s (%s) in development too', (value) => {
+    expect(() => normalizeApiBaseUrl(value, true)).toThrow(ApiBaseUrlConfigError);
+  });
+
+  it('rejects http:// loopback dot-segment and trailing-slash bypass attempts in development', () => {
+    expect(() => normalizeApiBaseUrl('http://localhost:8000/%2e', true)).toThrow(
+      ApiBaseUrlConfigError,
+    );
+    expect(() => normalizeApiBaseUrl('http://localhost:8000/..', true)).toThrow(
+      ApiBaseUrlConfigError,
+    );
+    expect(() => normalizeApiBaseUrl('http://localhost:8000/', true)).toThrow(
       ApiBaseUrlConfigError,
     );
   });

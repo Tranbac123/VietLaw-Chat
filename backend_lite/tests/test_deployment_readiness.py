@@ -14,10 +14,11 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from backend_lite.app.config import Settings
 from backend_lite.app.guards.rate_limiter import ConcurrencyLimiter, FixedWindowRateLimiter
-from backend_lite.app.main import create_app
+from backend_lite.app.main import CorsConfigError, create_app, validate_production_cors_origins
 
 
 # =============================================================================
@@ -94,12 +95,73 @@ def test_preflight_request_for_unconfigured_origin_is_not_authorized(settings: S
 
 def test_wildcard_origin_is_never_configured_in_source() -> None:
     # A static-source check, not a runtime one: confirms `allow_origins=["*"]`
-    # was never (re)introduced into the CORS wiring.
+    # was never (re)introduced into the actual CORSMiddleware wiring. (Bounded
+    # pre-deploy hardening: `main.py` now also validates an OPERATOR-supplied
+    # `CORS_ORIGINS=*` at runtime -- see the tests below -- which necessarily
+    # references the "*" literal itself; this assertion is narrowed to the
+    # specific hardcoded-into-CORSMiddleware pattern it originally existed to
+    # catch, not every occurrence of the character in the file.)
     main_source = (Path(__file__).resolve().parents[2] / "backend_lite" / "app" / "main.py").read_text(
         encoding="utf-8"
     )
-    assert '"*"' not in main_source
-    assert "'*'" not in main_source
+    assert 'allow_origins=["*"]' not in main_source
+    assert "allow_origins=['*']" not in main_source
+
+
+# =============================================================================
+# CORS: wildcard origin rejected in production (bounded pre-deploy hardening)
+# =============================================================================
+
+
+def test_production_rejects_wildcard_cors_origin() -> None:
+    with pytest.raises(CorsConfigError):
+        validate_production_cors_origins("production", ["*"])
+
+
+def test_production_accepts_exact_configured_cors_origin() -> None:
+    # Must not raise.
+    validate_production_cors_origins("production", ["https://vietlaw-demo.pages.dev"])
+
+
+def test_non_production_allows_wildcard_cors_origin() -> None:
+    # Not a blocker outside production -- the checklist forbids it there,
+    # but this guard is specifically the production deployment safety net.
+    validate_production_cors_origins("development", ["*"])
+
+
+def test_production_app_refuses_to_boot_with_wildcard_cors_origin(settings: Settings) -> None:
+    configured = settings.model_copy(update={"app_env": "production", "cors_origins": "*"})
+    with pytest.raises(CorsConfigError):
+        create_app(configured)
+
+
+# =============================================================================
+# APP_ENV: unrecognized values are rejected, not silently bypassed (bounded
+# pre-deploy hardening)
+# =============================================================================
+
+
+@pytest.mark.parametrize("invalid_value", ["prod", "staginggg", "foo", "unknown", "Production2"])
+def test_invalid_app_env_value_is_rejected(invalid_value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(app_env=invalid_value)
+
+
+@pytest.mark.parametrize(
+    ("configured_value", "expected"),
+    [
+        ("development", "development"),
+        ("test", "test"),
+        ("production", "production"),
+        ("  PRODUCTION  ", "production"),
+        ("Development", "development"),
+    ],
+)
+def test_canonical_app_env_values_are_accepted_case_and_whitespace_insensitively(
+    configured_value: str, expected: str
+) -> None:
+    configured = Settings(app_env=configured_value)
+    assert configured.app_env == expected
 
 
 # =============================================================================

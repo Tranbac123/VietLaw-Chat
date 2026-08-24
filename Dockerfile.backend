@@ -67,5 +67,11 @@ ENTRYPOINT ["python3", "/app/docker-entrypoint.py"]
 # $PORT. Shell form so ${PORT} is expanded by the shell at container
 # start, not baked in at build time. Docker concatenates ENTRYPOINT+CMD as
 # argv, so `docker-entrypoint.py` receives this as `sys.argv[1:]` and
-# `os.execvp`s it after dropping privileges.
-CMD ["sh", "-c", "exec uvicorn backend_lite.app.main:app --host 0.0.0.0 --port ${PORT}"]
+# `os.execvp`s it after dropping privileges. `${PORT}` is double-quoted so
+# its expansion is always exactly one shell word passed to `--port`, even
+# if the value were ever malformed (e.g. `8000 --reload`) -- word-splitting
+# an unquoted expansion would otherwise let extra whitespace-separated
+# content be interpreted as additional Uvicorn arguments; quoted, a
+# malformed value is instead rejected by Uvicorn's own `--port` parsing,
+# which fails startup rather than silently accepting an injected flag.
+CMD ["sh", "-c", "exec uvicorn backend_lite.app.main:app --host 0.0.0.0 --port \"${PORT}\""]

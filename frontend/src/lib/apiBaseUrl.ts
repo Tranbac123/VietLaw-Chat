@@ -34,6 +34,40 @@ export class ApiBaseUrlConfigError extends Error {
 //: literal) is the loopback form `http://[::1]:<port>` requires.
 const _DEV_ONLY_HTTP_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
+//: Review finding MEDIUM-01 (second pass): the exact-origin boundary must
+//: reject the raw configured value SYNTACTICALLY, before WHATWG `URL`
+//: ever gets a chance to normalize it. A prior fix compared the raw value
+//: against `url.origin` (with a trailing-slash exception) -- but WHATWG
+//: normalization means many distinct raw strings collapse to the same
+//: `origin`/`pathname`, and enumerating which of those normalized forms
+//: to special-case (a bare trailing slash today, some other equivalent
+//: form tomorrow) is exactly the blacklist-of-encodings trap this must
+//: avoid. Requiring the ENTIRE remainder after `scheme://` to contain
+//: none of `/ \ ? #` sidesteps normalization entirely: a path, a dot
+//: segment, its percent-encoded form, and a bare trailing slash all
+//: necessarily start with a literal `/` (or, since backslash is
+//: URL-normalized to `/` for special schemes, a literal `\`) separating
+//: them from the authority -- so all of them are rejected by this single
+//: syntactic rule, without the parser ever running on the rejected value.
+const _RAW_EXACT_ORIGIN_SHAPE = /^https?:\/\/[^/\\?#]+$/i;
+
+/**
+ * Rejects a configured value that is not syntactically `scheme://authority`
+ * with nothing else -- no path (including a bare trailing slash), no
+ * backslash, no query, no fragment -- before it is ever handed to `new
+ * URL(...)` for semantic parsing. See `_RAW_EXACT_ORIGIN_SHAPE` for why
+ * this must run pre-normalization rather than post-parse.
+ */
+function assertRawExactOriginShape(value: string): void {
+  if (!_RAW_EXACT_ORIGIN_SHAPE.test(value)) {
+    throw new ApiBaseUrlConfigError(
+      'VIETLAW: VITE_API_BASE_URL must be an exact origin (scheme + host, ' +
+        `optionally + port) with nothing else -- no path, trailing slash, ` +
+        `backslash, query, or fragment (got "${value}").`,
+    );
+  }
+}
+
 /**
  * Strict validation for an explicitly configured `VITE_API_BASE_URL`.
  * `isDev` is the ONLY thing that can permit `http:`, and only for
@@ -73,9 +107,12 @@ function assertValidApiBaseUrl(value: string, url: URL, isDev: boolean): void {
 /**
  * Trims whitespace, validates an explicitly configured value strictly for
  * the given environment (throwing `ApiBaseUrlConfigError` on anything
- * unsafe/malformed, or on any `http:` value at all when `isDev` is
- * false), and strips a valid trailing slash -- or reports "not
- * configured" (`undefined`) when nothing was set at all.
+ * unsafe/malformed, on a value that isn't syntactically an exact
+ * `scheme://authority` origin, or on any `http:` value at all when
+ * `isDev` is false) -- or reports "not configured" (`undefined`) when
+ * nothing was set at all. The raw-shape check runs BEFORE `new URL(...)`
+ * parsing (see `assertRawExactOriginShape`), so a value is never accepted
+ * on the strength of how the parser happened to normalize it.
  */
 export function normalizeApiBaseUrl(
   configuredValue: string | undefined,
@@ -85,6 +122,7 @@ export function normalizeApiBaseUrl(
   if (!trimmed) {
     return undefined;
   }
+  assertRawExactOriginShape(trimmed);
   let url: URL;
   try {
     url = new URL(trimmed);
@@ -92,5 +130,5 @@ export function normalizeApiBaseUrl(
     throw new ApiBaseUrlConfigError(`VIETLAW: VITE_API_BASE_URL is not a valid URL ("${trimmed}").`);
   }
   assertValidApiBaseUrl(trimmed, url, isDev);
-  return trimmed.replace(/\/$/, '');
+  return trimmed;
 }
